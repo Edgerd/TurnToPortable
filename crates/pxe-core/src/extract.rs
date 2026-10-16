@@ -5,6 +5,7 @@
 //! - MSI 不再靠 "This installation package" 字符串检测（该字符串根本不在 MSI 文件里）
 //! - 解压结果验证更严格：必须有 PE 或 manifest，且无裸节碎片
 
+use crate::builder::copy_dir_contents;
 use crate::detect::InstallerKind;
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
@@ -83,6 +84,27 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         };
         match r {
             Ok(()) => {
+                // electron-builder 的 NSIS 布局：外层壳里只有 $PLUGINSDIR/app-64.7z，
+                // 真正的主程序在内层 7z —— 检测到就二次解包
+                if matches!(k, InstallerKind::Sfx7z) && !has_exe_outside_pluginsdir(dest) {
+                    if let Some(inner) = find_pluginsdir_7z(dest) {
+                        let tmp = dest.join(".__pxe_inner");
+                        let _ = std::fs::remove_dir_all(&tmp);
+                        if sevenz_rust::decompress_file(&inner, &tmp).is_ok() && validate(&tmp) {
+                            // 清空 dest（保留 tmp），再把内层内容移进来
+                            for e in std::fs::read_dir(dest)?.flatten() {
+                                if e.file_name() != ".__pxe_inner" {
+                                    let p = e.path();
+                                    if p.is_dir() { std::fs::remove_dir_all(&p)?; } else { std::fs::remove_file(&p)?; }
+                                }
+                            }
+                            copy_dir_contents(&tmp, dest)?;
+                            std::fs::remove_dir_all(&tmp)?;
+                            return Ok(Extracted { dir: dest.to_path_buf(), via: "nsis-app-7z".into() });
+                        }
+                        let _ = std::fs::remove_dir_all(&tmp);
+                    }
+                }
                 if validate(dest) {
                     return Ok(Extracted { dir: dest.to_path_buf(), via: label.to_string() });
                 }
@@ -280,6 +302,47 @@ fn clear_dir(dir: &Path) -> Result<()> {
     }
     std::fs::create_dir_all(dir)?;
     Ok(())
+}
+
+/// 在 dest/$PLUGINSDIR 下找内层 7z（electron-builder 命名为 app-64.7z 等），取最大的一个
+fn find_pluginsdir_7z(dest: &Path) -> Option<PathBuf> {
+    let rd = std::fs::read_dir(dest.join("$PLUGINSDIR")).ok()?;
+    let mut best: Option<(u64, PathBuf)> = None;
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().map(|x| x.eq_ignore_ascii_case("7z")).unwrap_or(false) {
+            let sz = e.metadata().map(|m| m.len()).unwrap_or(0);
+            if best.as_ref().map(|(s, _)| sz > *s).unwrap_or(true) {
+                best = Some((sz, p));
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// 除 $PLUGINSDIR 外是否存在可执行文件（有则说明外层就是程序本体，无需二次解包）
+fn has_exe_outside_pluginsdir(dir: &Path) -> bool {
+    fn rec(dir: &Path, depth: usize) -> bool {
+        if depth > 4 {
+            return false;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else { return false };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().map(|n| n == "$PLUGINSDIR").unwrap_or(false) {
+                    continue;
+                }
+                if rec(&p, depth + 1) {
+                    return true;
+                }
+            } else if p.extension().map(|x| x.eq_ignore_ascii_case("exe")).unwrap_or(false) {
+                return true;
+            }
+        }
+        false
+    }
+    rec(dir, 0)
 }
 
 #[cfg(test)]

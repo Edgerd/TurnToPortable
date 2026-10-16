@@ -133,7 +133,7 @@ enum PackKind { dir, zip, sevenZip }
 
 extension PackKindLabel on PackKind {
   String get label => switch (this) { PackKind.dir => '文件夹', PackKind.zip => 'ZIP', PackKind.sevenZip => '7z' };
-  String get flag => switch (this) { PackKind.dir => 'dir', PackKind.zip => 'zip', PackKind.sevenZip => '7z' };
+  String get flag => switch (this) { PackKind.dir => 'dir', PackKind.zip => 'zip', PackKind.sevenZip => 'seven-zip' };
   String get hint => switch (this) {
         PackKind.dir => '生成标准便携目录，可直接放入 U 盘',
         PackKind.zip => '打成单个 .zip，便于网络分发',
@@ -203,6 +203,7 @@ class _HomePageState extends State<HomePage> {
   final List<_LogLine> _log = [];
   bool _busy = false;
   bool _logOpen = false;
+  bool _outTouched = false; // 用户是否手动改过输出目录；没改过就跟随安装包所在目录
   Process? _proc;
 
   String? _builtDir;   // [pxe] portable app: ...
@@ -240,6 +241,10 @@ class _HomePageState extends State<HomePage> {
     }
     _inputCtrl.text = f.path;
     if (_nameCtrl.text.trim().isEmpty) _nameCtrl.text = _deriveName(f.name);
+    if (!_outTouched) {
+      final parent = File(f.path).parent.path;
+      if (parent.isNotEmpty) _outCtrl.text = parent;
+    }
     setState(() {});
     _precheck();
   }
@@ -248,6 +253,7 @@ class _HomePageState extends State<HomePage> {
     final d = await getDirectoryPath();
     if (d == null) return;
     _outCtrl.text = d;
+    _outTouched = true;
     setState(() {});
   }
 
@@ -453,6 +459,7 @@ class _HomePageState extends State<HomePage> {
                           _Field(
                             label: '输出到',
                             controller: _outCtrl,
+                            onChanged: () => _outTouched = true,
                             action: OutlinedButton.icon(
                               onPressed: _busy ? null : _pickDir,
                               icon: const Icon(Icons.folder_outlined, size: 18),
@@ -727,8 +734,9 @@ class _Field extends StatelessWidget {
   final TextEditingController controller;
   final String? hint;
   final Widget? action;
+  final VoidCallback? onChanged;
 
-  const _Field({required this.label, required this.controller, this.hint, this.action});
+  const _Field({required this.label, required this.controller, this.hint, this.action, this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -741,6 +749,7 @@ class _Field extends StatelessWidget {
           child: TextField(
             controller: controller,
             style: const TextStyle(fontSize: 14),
+            onChanged: onChanged != null ? (_) => onChanged!() : null,
             decoration: InputDecoration(
               hintText: hint,
               isDense: true,

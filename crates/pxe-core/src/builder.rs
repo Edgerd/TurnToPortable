@@ -192,7 +192,7 @@ fn add_dir_to_zip(
     Ok(())
 }
 
-fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
+pub(crate) fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
     for e in std::fs::read_dir(src)?.flatten() {
         let p = e.path();
         let d = dst.join(e.file_name());
