@@ -153,6 +153,10 @@ class _LogLine {
 String friendly(String raw) {
   final t = raw.trim();
   final rules = [
+    (RegExp(r'7-Zip not found|needs 7z\.exe', caseSensitive: false),
+        '这种安装包（NSIS）需要 7-Zip 组件解包。新版已随程序附带 7z.exe；如果你是自己单独下载的 pxe.exe，请把 7z.exe 和 7z.dll 放到程序同一目录（或安装 7-Zip 后重试）。'),
+    (RegExp(r'解包失败（', caseSensitive: false),
+        '解包失败了：这个安装包可能是加密的企业分发包、已损坏，或使用了暂不支持的打包技术。可以先用 7-Zip 手动打开确认里面是什么，再用「独立应用目录」方式打包。'),
     (RegExp(r'innoextract.*not found|innoextract not', caseSensitive: false),
         '这种 Inno Setup 安装包需要 innoextract 工具辅助解包。请从 constexpr.org/innoextract 下载，把 innoextract.exe 放到本程序同一目录后重试。'),
     (RegExp(r'unrar.*not found', caseSensitive: false),

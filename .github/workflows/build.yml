@@ -36,6 +36,10 @@ jobs:
           $out = "app\build\windows\x64\runner\Release"
           Copy-Item app\pxe.exe $out\
           Copy-Item app\pxe-stub.exe $out\
+          # 随包分发 7-Zip 组件（NSIS 等格式需要；LGPL 许可允许再分发）
+          Copy-Item "C:\Program Files\7-Zip\7z.exe" $out\
+          Copy-Item "C:\Program Files\7-Zip\7z.dll" $out\
+          Copy-Item "C:\Program Files\7-Zip\license.txt" $out\7-zip-license.txt
           Compress-Archive -Path "$out\*" -DestinationPath PortableXE-windows.zip
 
       - uses: actions/upload-artifact@v4

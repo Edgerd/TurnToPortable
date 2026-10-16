@@ -111,6 +111,10 @@ fn cmd_build(
                 source = r.dir;
                 is_standalone = false;
             }
+            Err(e) if d.kind.is_installer() => {
+                // 真安装包解不开就必须失败，绝不能把安装包本体当"便携应用"
+                anyhow::bail!("解包失败（{} 类型）：{e}。这个安装包可能已损坏或使用了未支持的加密方式。", d.kind.label());
+            }
             Err(e) => {
                 tracing::warn!("extraction failed ({e}); treating as standalone");
                 via = "none".into();

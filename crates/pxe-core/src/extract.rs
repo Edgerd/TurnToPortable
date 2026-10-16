@@ -46,8 +46,9 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         InstallerKind::InnoSetup => {
             &[(InstallerKind::InnoSetup, "innoextract"), (InstallerKind::Sfx7z, "embedded-7z")]
         }
-        InstallerKind::Nsis | InstallerKind::Sfx7z | InstallerKind::InstallShield | InstallerKind::WiXBurn => {
-            &[(InstallerKind::Sfx7z, "embedded-7z")]
+        InstallerKind::Nsis => &[(InstallerKind::Sfx7z, "embedded-7z"), (InstallerKind::Nsis, "external-7z")],
+        InstallerKind::Sfx7z | InstallerKind::InstallShield | InstallerKind::WiXBurn => {
+            &[(InstallerKind::Sfx7z, "embedded-7z"), (InstallerKind::Nsis, "external-7z")]
         }
         InstallerKind::Msi => &[(InstallerKind::Msi, "msiexec")],
         InstallerKind::Msix | InstallerKind::Appx | InstallerKind::Zip | InstallerKind::Squirrel => {
@@ -67,6 +68,7 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         let r = match k {
             InstallerKind::Zip => extract_zip(path, dest),
             InstallerKind::Sfx7z => extract_7z_embedded(path, dest),
+            InstallerKind::Nsis => extract_7z_external(path, dest),
             InstallerKind::Tar => extract_tar(std::io::BufReader::new(std::fs::File::open(path)?), dest),
             InstallerKind::TarGz => extract_tar(flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?), dest),
             InstallerKind::Gz => extract_gz(path, dest),
@@ -85,8 +87,8 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         match r {
             Ok(()) => {
                 // electron-builder 的 NSIS 布局：外层壳里只有 $PLUGINSDIR/app-64.7z，
-                // 真正的主程序在内层 7z —— 检测到就二次解包
-                if matches!(k, InstallerKind::Sfx7z) && !has_exe_outside_pluginsdir(dest) {
+                // 真正的主程序在内层 7z —— 检测到就二次解包（embedded / external 解出的都适用）
+                if !has_exe_outside_pluginsdir(dest) {
                     if let Some(inner) = find_pluginsdir_7z(dest) {
                         let tmp = dest.join(".__pxe_inner");
                         let _ = std::fs::remove_dir_all(&tmp);
@@ -130,6 +132,38 @@ fn extract_zip(path: &Path, dest: &Path) -> Result<()> {
 
 fn extract_7z_embedded(path: &Path, dest: &Path) -> Result<()> {
     sevenz_rust::decompress_file(path, dest).map_err(|e| Error::SevenZ(e.to_string()))
+}
+
+/// 用外部 7-Zip 解（NSIS 外壳只有完整版 7z 支持；7z.exe/7z.dll 需在本程序目录或 PATH）
+fn extract_7z_external(path: &Path, dest: &Path) -> Result<()> {
+    let exe = find_7z().ok_or_else(|| {
+        Error::Extraction(
+            "7-Zip not found: this NSIS package needs 7z.exe + 7z.dll (place them next to the program, or install 7-Zip)".into(),
+        )
+    })?;
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(["x", "-y", &format!("-o{}", dest.display())]);
+    cmd.arg(path);
+    let status = run_with_timeout(no_window(cmd))
+        .map_err(|e| Error::Extraction(e.to_string()))?;
+    if !status.success() {
+        return Err(Error::Extraction(format!("7z exited with {status}")));
+    }
+    Ok(())
+}
+
+/// 找 7z.exe：本程序同目录优先，其次 PATH
+fn find_7z() -> Option<PathBuf> {
+    let self_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    for dir in std::iter::once(self_dir).chain(std::env::split_paths(&std::env::var_os("PATH")?)) {
+        for name in ["7z.exe", "7za.exe", "7z"] {
+            let p = dir.join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 fn extract_tar<R: std::io::Read>(reader: R, dest: &Path) -> Result<()> {
