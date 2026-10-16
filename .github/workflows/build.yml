@@ -22,6 +22,10 @@ jobs:
         with:
           channel: stable
 
+      - name: Analyze Flutter
+        working-directory: app
+        run: flutter analyze --fatal-infos
+
       - name: Build Flutter Windows
         working-directory: app
         run: flutter build windows --release

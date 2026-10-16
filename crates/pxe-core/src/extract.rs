@@ -54,6 +54,10 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         }
         InstallerKind::SevenZip => &[(InstallerKind::Sfx7z, "embedded-7z")],
         InstallerKind::Rar | InstallerKind::SfxRar => &[(InstallerKind::Rar, "unrar")],
+        InstallerKind::Tar => &[(InstallerKind::Tar, "embedded-tar")],
+        InstallerKind::TarGz => &[(InstallerKind::TarGz, "embedded-targz")],
+        InstallerKind::Gz => &[(InstallerKind::Gz, "embedded-gzip")],
+        InstallerKind::Cab => &[(InstallerKind::Cab, "expand")],
         _ => &[(InstallerKind::Zip, "embedded-zip"), (InstallerKind::Sfx7z, "embedded-7z")],
     };
 
@@ -62,6 +66,12 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         let r = match k {
             InstallerKind::Zip => extract_zip(path, dest),
             InstallerKind::Sfx7z => extract_7z_embedded(path, dest),
+            InstallerKind::Tar => extract_tar(std::io::BufReader::new(std::fs::File::open(path)?), dest),
+            InstallerKind::TarGz => extract_tar(flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?), dest),
+            InstallerKind::Gz => extract_gz(path, dest),
+            InstallerKind::Cab => extract_external("expand", &[
+                "-r".into(), path.display().to_string(), dest.display().to_string(),
+            ]),
             InstallerKind::InnoSetup => extract_external("innoextract", &[
                 "-d".into(), dest.display().to_string(), "-s".into(), path.display().to_string(),
             ]),
@@ -98,6 +108,32 @@ fn extract_zip(path: &Path, dest: &Path) -> Result<()> {
 
 fn extract_7z_embedded(path: &Path, dest: &Path) -> Result<()> {
     sevenz_rust::decompress_file(path, dest).map_err(|e| Error::SevenZ(e.to_string()))
+}
+
+fn extract_tar<R: std::io::Read>(reader: R, dest: &Path) -> Result<()> {
+    let mut tar = tar::Archive::new(reader);
+    tar.set_preserve_permissions(false);
+    tar.unpack(dest).map_err(|e| Error::Extraction(format!("tar: {e}")))
+}
+
+/// 单文件 gzip：解出来若内嵌 tar 则继续按 tar 解包，否则落成单个文件
+fn extract_gz(path: &Path, dest: &Path) -> Result<()> {
+    use std::io::Read;
+    let out_name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "payload".into());
+    let out_path = dest.join(&out_name);
+    let f = std::fs::File::open(path)?;
+    let mut d = flate2::read::MultiGzDecoder::new(f);
+    let mut buf = Vec::new();
+    d.read_to_end(&mut buf).map_err(|e| Error::Extraction(format!("gzip: {e}")))?;
+    // tar 头（前 512 字节 offset 257 = ustar）→ 按 tar 解
+    if buf.len() > 512 && &buf[257..262] == b"ustar" {
+        return extract_tar(std::io::Cursor::new(buf), dest);
+    }
+    std::fs::write(out_path, &buf)?;
+    Ok(())
 }
 
 // ---------- 外部工具回退 ----------

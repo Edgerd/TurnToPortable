@@ -27,17 +27,31 @@ pub enum InstallerKind {
     SevenZip,
     Rar,
     Tar,
+    TarGz,
+    Gz,
+    Cab,
     Standalone,
     Unknown,
 }
 
 impl InstallerKind {
     pub fn is_archive(&self) -> bool {
-        matches!(self, Self::Zip | Self::SevenZip | Self::Rar | Self::Tar | Self::Msix | Self::Appx)
+        matches!(self, Self::Zip | Self::SevenZip | Self::Rar | Self::Tar | Self::TarGz | Self::Gz | Self::Cab | Self::Msix | Self::Appx)
     }
 
     pub fn is_installer(&self) -> bool {
-        !matches!(self, Self::Standalone | Self::Unknown | Self::Zip | Self::SevenZip | Self::Rar | Self::Tar)
+        !matches!(
+            self,
+            Self::Standalone
+                | Self::Unknown
+                | Self::Zip
+                | Self::SevenZip
+                | Self::Rar
+                | Self::Tar
+                | Self::TarGz
+                | Self::Gz
+                | Self::Cab
+        )
     }
 
     pub fn label(&self) -> &'static str {
@@ -56,6 +70,9 @@ impl InstallerKind {
             Self::SevenZip => "7z Archive",
             Self::Rar => "RAR Archive",
             Self::Tar => "TAR Archive",
+            Self::TarGz => "Tar+Gzip Archive",
+            Self::Gz => "GZIP File",
+            Self::Cab => "Cabinet (CAB)",
             Self::Standalone => "Standalone Application",
             Self::Unknown => "Unknown",
         }
@@ -104,6 +121,15 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
     if data.len() > 512 && &data[257..262] == MAGIC_USTAR {
         return Ok(Detection { kind: InstallerKind::Tar, note: None, pe: None, sha256 });
     }
+    // GZIP 家族：进一步嗅探内部是 tar 还是单文件
+    if data.starts_with(b"\x1f\x8b") {
+        let kind = sniff_gzip(&data);
+        return Ok(Detection { kind, note: None, pe: None, sha256 });
+    }
+    // Windows CAB（expand.exe 可解）
+    if data.starts_with(b"MSCF") {
+        return Ok(Detection { kind: InstallerKind::Cab, note: None, pe: None, sha256 });
+    }
 
     // --- 2. PE 结构检测 ---
     let pe_info = pe::parse_bytes(&data);
@@ -119,6 +145,19 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
         pe: (pe_info.is_valid_pe).then_some(pe_info),
         sha256,
     })
+}
+
+/// 解压 gzip 前 1KB，看里面是不是 tar（512 字节头 + offset 257 的 ustar 标记）
+fn sniff_gzip(data: &[u8]) -> InstallerKind {
+    use std::io::Read;
+    let mut d = flate2::read::MultiGzDecoder::new(data);
+    let mut buf = [0u8; 1024];
+    let n = d.read(&mut buf).unwrap_or(0);
+    if n > 512 && &buf[257..262] == MAGIC_USTAR {
+        InstallerKind::TarGz
+    } else {
+        InstallerKind::Gz
+    }
 }
 
 /// ZIP 家族：MSIX / AppX / Squirrel / 普通 ZIP / 7z-SFX(PE stub)
