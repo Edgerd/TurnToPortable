@@ -87,6 +87,10 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         };
         match r {
             Ok(()) => {
+                // innoextract 会保留 Inno 的 {app} 前缀（多套一层 app/ 目录），展平它
+                if *k == InstallerKind::InnoSetup {
+                    let _ = flatten_app_dir(dest);
+                }
                 // electron-builder 的 NSIS 布局：外层壳里只有 $PLUGINSDIR/app-64.7z，
                 // 真正的主程序在内层 7z —— 检测到就二次解包（embedded / external 解出的都适用）
                 if !has_exe_outside_pluginsdir(dest) {
@@ -129,6 +133,28 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
     } else {
         errs.join(" | ")
     }))
+}
+
+/// 展平 innoextract 的 {app} 包装目录：dest 下只有 app/ 一个目录时，把其内容上移一层。
+fn flatten_app_dir(dest: &Path) -> Result<()> {
+    let entries: Vec<_> = std::fs::read_dir(dest)?.flatten().collect();
+    if entries.len() != 1 {
+        return Ok(());
+    }
+    let only = &entries[0].path();
+    let is_app_dir = only.is_dir()
+        && only
+            .file_name()
+            .map(|n| n.eq_ignore_ascii_case("app"))
+            .unwrap_or(false);
+    if !is_app_dir {
+        return Ok(());
+    }
+    for e in std::fs::read_dir(only)?.flatten() {
+        std::fs::rename(e.path(), dest.join(e.file_name()))?;
+    }
+    std::fs::remove_dir(only)?;
+    Ok(())
 }
 
 // ---------- 内嵌实现 ----------
