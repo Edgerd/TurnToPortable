@@ -119,7 +119,7 @@ class PortableXEApp extends StatelessWidget {
           ),
           margin: EdgeInsets.zero,
         ),
-        sliderTheme: const SliderThemeData(showValueIndicator: ShowValueIndicator.always),
+        sliderTheme: const SliderThemeData(showValueIndicator: ShowValueIndicator.onDrag),
         fontFamilyFallback: const ['Microsoft YaHei UI', 'Microsoft YaHei', 'SimHei'],
       ),
       home: const HomePage(),
