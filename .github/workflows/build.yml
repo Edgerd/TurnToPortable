@@ -29,7 +29,7 @@ jobs:
       - name: Bundle
         shell: pwsh
         run: |
-          $out = "build\windows\x64\runner\Release"
+          $out = "app\build\windows\x64\runner\Release"
           Copy-Item app\pxe.exe $out\
           Copy-Item app\pxe-stub.exe $out\
           Compress-Archive -Path "$out\*" -DestinationPath PortableXE-windows.zip
