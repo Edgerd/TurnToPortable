@@ -46,8 +46,8 @@ class Settings {
   static Future<void> load() async {
     try {
       final m = jsonDecode(await _file.readAsString()) as Map<String, dynamic>;
-      compression = (m['compression'] as num?)?.clamp(1, 9) ?? 6;
-      timeoutMin = (m['timeoutMin'] as num?)?.clamp(1, 120) ?? 5;
+      compression = ((m['compression'] as num?) ?? 6).clamp(1, 9).toInt();
+      timeoutMin = ((m['timeoutMin'] as num?) ?? 5).clamp(1, 120).toInt();
       nativeStub = m['nativeStub'] ?? true;
       redistNote = m['redistNote'] ?? true;
       openWhenDone = m['openWhenDone'] ?? false;
@@ -119,7 +119,7 @@ class PortableXEApp extends StatelessWidget {
           ),
           margin: EdgeInsets.zero,
         ),
-        sliderTheme: const SliderThemeData(showValueIndicator: showValueIndicatorAlways),
+        sliderTheme: const SliderThemeData(showValueIndicator: ShowValueIndicator.always),
         fontFamilyFallback: const ['Microsoft YaHei UI', 'Microsoft YaHei', 'SimHei'],
       ),
       home: const HomePage(),
@@ -432,7 +432,7 @@ class _HomePageState extends State<HomePage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // ------- 第 1 步 -------
-                        _card(theme, icon: Icons.deployed_code_outlined, title: '选择安装包', child: Column(children: [
+                        _card(theme, icon: Icons.download_outlined, title: '选择安装包', child: Column(children: [
                           _Field(
                             label: '文件',
                             controller: _inputCtrl,
@@ -544,7 +544,7 @@ class _HomePageState extends State<HomePage> {
                 // ------- 日志区 -------
                 AnimatedCrossFade(
                   duration: const Duration(milliseconds: 200),
-                  crossFadeState: _logOpen ? CrossFadeState.showSecond : CrossFadeState.hideFirst,
+                  crossFadeState: _logOpen ? CrossFadeState.showSecond : CrossFadeState.showFirst,
                   secondChild: Container(
                     height: 170,
                     width: double.infinity,
@@ -581,7 +581,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
-                  firstChild: const SizedBox(width: double.infinity),
+                  firstChild: const SizedBox(width: double.infinity, height: 0),
                 ),
               ],
             ),
