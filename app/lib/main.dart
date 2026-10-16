@@ -153,6 +153,8 @@ class _LogLine {
 String friendly(String raw) {
   final t = raw.trim();
   final rules = [
+    (RegExp(r'Unexpected setup data version|Stream error while parsing setup headers', caseSensitive: false),
+        '这个安装包使用了较新版本的 Inno Setup（6.4+），当前内置的 innoextract 1.9 还不支持。可以等待工具更新，或用「独立应用目录」方式先手动安装再打包。'),
     (RegExp(r'7-Zip not found|needs 7z\.exe', caseSensitive: false),
         '这种安装包（NSIS）需要 7-Zip 组件解包。新版已随程序附带 7z.exe；如果你是自己单独下载的 pxe.exe，请把 7z.exe 和 7z.dll 放到程序同一目录（或安装 7-Zip 后重试）。'),
     (RegExp(r'解包失败（', caseSensitive: false),
@@ -263,8 +265,10 @@ class _HomePageState extends State<HomePage> {
 
   String _deriveName(String fileName) {
     var stem = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-    for (final t in ['setup', 'install', 'installer', '-x64', '-x86', '-win64', '-win32', '_x64']) {
-      stem = stem.toLowerCase().replaceAll(t, '');
+    // 大小写不敏感移除后缀词，但保留原始大小写（CrystalDiskInfo 不能变成 crystaldiskinfo）
+    for (final t in ['installer', 'install', 'setup', '-x64', '-x86', '-win64', '-win32', '_x64']) {
+      final idx = stem.toLowerCase().indexOf(t);
+      if (idx >= 0) stem = stem.substring(0, idx) + stem.substring(idx + t.length);
     }
     stem = stem.replaceAll(RegExp(r'^[-_.\s]+|[-_.\s]+$'), '').replaceAll(RegExp(r'[-_\s]+'), ' ');
     if (stem.isEmpty) return 'App';

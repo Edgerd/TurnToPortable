@@ -48,14 +48,11 @@ pub fn create_structure(output_dir: &Path, app_name: &str) -> Result<PathBuf> {
 }
 
 /// 把解压内容（或单 exe）拷入 App/。
-pub fn fill_app_dir(source: &Path, root: &Path, is_standalone: bool) -> Result<()> {
+pub fn fill_app_dir(source: &Path, root: &Path, _is_standalone: bool) -> Result<()> {
     let app = root.join("App");
     if !source.is_dir() {
         let dest = app.join(source.file_name().ok_or_else(|| Error::InvalidPackage("no file name".into()))?);
         std::fs::copy(source, &dest)?;
-    } else if is_standalone {
-        // 目录形态的"独立应用"：整目录拷入（e2e 测试与 GUI 场景）
-        copy_dir_contents(source, &app)?;
     } else {
         copy_dir_contents(source, &app)?;
     }
@@ -90,9 +87,9 @@ pub fn write_launchers(root: &Path, app_name: &str, cfg: &Config) -> Result<Opti
 }
 
 fn write_script_fallbacks(root: &Path, app_name: &str, exe_rel: &str) {
-    let _ = std::fs::write(root.join(format!("{app_name}.bat")), launcher::main_bat(app_name, &exe_rel));
+    let _ = std::fs::write(root.join(format!("{app_name}.bat")), launcher::main_bat(app_name, exe_rel));
     let _ = std::fs::write(root.join("RUN.bat"), launcher::run_bat(app_name));
-    let _ = std::fs::write(root.join(format!("{app_name}.ps1")), launcher::ps1(app_name, &exe_rel));
+    let _ = std::fs::write(root.join(format!("{app_name}.ps1")), launcher::ps1(app_name, exe_rel));
 }
 
 fn find_stub() -> Option<PathBuf> {
@@ -122,7 +119,7 @@ fn find_stub() -> Option<PathBuf> {
 }
 
 /// 把官方 vc_redist 安装器放进 Redist/（用户提供路径时），否则只写 README 说明。
-pub fn write_redist(root: &Path, app_name: &str, cfg: &Config, redist: Option<&Path>) -> Result<()> {
+pub fn write_redist(root: &Path, app_name: &str, _cfg: &Config, redist: Option<&Path>) -> Result<()> {
     let dir = root.join("Redist");
     std::fs::write(
         dir.join("README.md"),

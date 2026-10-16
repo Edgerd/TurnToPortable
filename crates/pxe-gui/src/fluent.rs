@@ -19,7 +19,7 @@ pub struct FluentTheme {
 impl FluentTheme {
     pub fn apply(&self, ctx: &egui::Context) {
         let mut style = Style::default();
-        let (bg, card, stroke, text, subtle_text) = if self.dark {
+        let (bg, card, stroke, text, _subtle_text) = if self.dark {
             (
                 Color32::from_rgb(0x20, 0x20, 0x20),   // Mica-like base
                 Color32::from_rgb(0x2B, 0x2B, 0x2B),   // card layer

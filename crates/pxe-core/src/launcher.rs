@@ -1,12 +1,12 @@
 //! 启动器生成：bat / ps1 模板（语法修复：`exit /b` 而非非法的 `return`）
 //! 以及原生 stub 启动器（pxe-stub.exe）。
 
-use crate::Result;
 use std::path::{Path, PathBuf};
 
 /// bat 模板 —— 所有子例程以 `exit /b` 结尾（原版用非法的 `return`，产物无法运行）。
+/// 行尾统一 CRLF：cmd.exe 对纯 LF 的 bat 在标签/多行块上有已知解析问题。
 pub fn main_bat(app_name: &str, exe_rel: &str) -> String {
-    format!(
+    let lf = format!(
         r#"@echo off
 setlocal EnableDelayedExpansion
 title {app_name} - Portable Launcher
@@ -35,7 +35,8 @@ start "" "%APP_DIR%\{exe_rel}" %*
 popd
 exit /b 0
 "#
-    )
+    );
+    lf.replace('\n', "\r\n")
 }
 
 pub fn run_bat(app_name: &str) -> String {

@@ -2,8 +2,8 @@
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use pxe_core::{builder, config::Config, detect, extract, pe};
-use std::path::PathBuf;
+use pxe_core::{builder, config::Config, detect, extract};
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_detect(file: &PathBuf) -> anyhow::Result<()> {
+fn cmd_detect(file: &Path) -> anyhow::Result<()> {
     let d = detect::detect(file).context("detect failed")?;
     println!("File:        {}", file.display());
     println!("Type:        {}", d.kind.label());
@@ -73,7 +73,7 @@ fn cmd_detect(file: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_extract(file: &PathBuf, out: &PathBuf) -> anyhow::Result<()> {
+fn cmd_extract(file: &Path, out: &Path) -> anyhow::Result<()> {
     let d = detect::detect(file)?;
     println!("[pxe] type: {}", d.kind.label());
     let r = extract::extract(file, d.kind, out)?;
@@ -82,12 +82,12 @@ fn cmd_extract(file: &PathBuf, out: &PathBuf) -> anyhow::Result<()> {
 }
 
 fn cmd_build(
-    file: &PathBuf,
+    file: &Path,
     name: Option<String>,
     out: Option<PathBuf>,
     pack_kind: builder::PackKind,
     redist: Option<PathBuf>,
-    config: &PathBuf,
+    config: &Path,
 ) -> anyhow::Result<()> {
     // 结构化进度行：[pxe|progress|0.15|消息]，GUI（Flutter）按此协议解析
     let prog = |p: f32, msg: &str| println!("[pxe|progress|{p:.2}|{msg}]");
@@ -103,8 +103,9 @@ fn cmd_build(
     prog(0.15, "正在解压…");
 
     let (source, is_standalone, via);
-    if d.is_installer() || d.kind.is_archive() {
-        let tmp = std::env::temp_dir().join(format!("pxe_extract_{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("pxe_extract_{}", std::process::id()));
+    let using_tmp = d.is_installer() || d.kind.is_archive();
+    if using_tmp {
         match extract::extract(file, d.kind, &tmp) {
             Ok(r) => {
                 via = r.via.clone();
@@ -113,23 +114,29 @@ fn cmd_build(
             }
             Err(e) if d.kind.is_installer() => {
                 // 真安装包解不开就必须失败，绝不能把安装包本体当"便携应用"
+                let _ = std::fs::remove_dir_all(&tmp);
                 anyhow::bail!("解包失败（{} 类型）：{e}。这个安装包可能已损坏或使用了未支持的加密方式。", d.kind.label());
             }
             Err(e) => {
                 tracing::warn!("extraction failed ({e}); treating as standalone");
+                let _ = std::fs::remove_dir_all(&tmp);
                 via = "none".into();
-                source = file.clone();
+                source = file.to_path_buf();
                 is_standalone = true;
             }
         }
     } else {
         via = "standalone".into();
-        source = file.clone();
+        source = file.to_path_buf();
         is_standalone = true;
     }
 
     prog(0.55, "正在生成便携应用…");
-    let r = builder::build(&source, &out_dir, &app_name, is_standalone, &via, pack_kind, &cfg, redist.as_deref())?;
+    let r = builder::build(&source, &out_dir, &app_name, is_standalone, &via, pack_kind, &cfg, redist.as_deref());
+    if using_tmp {
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+    let r = r?;
     println!("[pxe] portable app: {}", r.portable_dir.display());
     prog(0.85, "正在打包…");
     if let Some(exe) = &r.main_exe {
@@ -142,17 +149,41 @@ fn cmd_build(
     Ok(())
 }
 
-fn derive_name(file: &PathBuf) -> String {
-    let mut stem = file
+/// 从文件名推导应用名：去掉 setup/install 字样，保留原始大小写（"Qoder-Setup" → "Qoder"）。
+fn derive_name(file: &Path) -> String {
+    let stem = file
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("App")
         .to_string();
-    for t in ["setup", "install", "installer"] {
-        stem = stem.to_lowercase().replace(t, "");
-    }
+    let stem = remove_tokens_ci(&stem, ["setup", "install", "installer"]);
     let stem = stem.trim_matches(|c: char| c == '-' || c == '_' || c == ' ');
     if stem.is_empty() { "App".into() } else { capitalize(stem) }
+}
+
+/// 大小写不敏感地移除词法片段，保留其余部分原始大小写
+fn remove_tokens_ci(s: &str, tokens: impl IntoIterator<Item = &'static str>) -> String {
+    let lower = s.to_lowercase();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for t in tokens {
+        let mut from = 0;
+        while let Some(pos) = lower[from..].find(t) {
+            let start = from + pos;
+            ranges.push((start, start + t.len()));
+            from = start + t.len();
+        }
+    }
+    ranges.sort();
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    for (a, b) in ranges {
+        if a >= last {
+            out.push_str(&s[last..a]);
+            last = b;
+        }
+    }
+    out.push_str(&s[last..]);
+    out
 }
 
 fn capitalize(s: &str) -> String {

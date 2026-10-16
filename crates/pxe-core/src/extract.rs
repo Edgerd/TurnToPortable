@@ -63,7 +63,8 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         _ => &[(InstallerKind::Zip, "embedded-zip"), (InstallerKind::Sfx7z, "embedded-7z")],
     };
 
-    let mut last_err = None;
+    // 串联所有尝试的错误（主解包器在前 —— 通常信息量最大）
+    let mut errs: Vec<String> = Vec::new();
     for (k, label) in attempts {
         let r = match k {
             InstallerKind::Zip => extract_zip(path, dest),
@@ -80,7 +81,7 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
             ]),
             InstallerKind::Msi => extract_msi(path, dest),
             InstallerKind::Rar => extract_external("unrar", &[
-                "x".into(), path.display().to_string(), format!("{}\\", dest.display()),
+                "x".into(), path.display().to_string(), format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR),
             ]),
             _ => continue,
         };
@@ -110,15 +111,24 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                 if validate(dest) {
                     return Ok(Extracted { dir: dest.to_path_buf(), via: label.to_string() });
                 }
-                last_err = Some(Error::Extraction(format!("{label}: output failed validation")));
+                errs.push(format!("{label}: output failed validation"));
             }
-            Err(e) => last_err = Some(e),
+            Err(e) => {
+                let msg = e.to_string();
+                if !errs.iter().any(|x| x.contains(&msg)) {
+                    errs.push(msg);
+                }
+            }
         }
         // 清空后重试下一种方式
         clear_dir(dest)?;
     }
 
-    Err(last_err.unwrap_or_else(|| Error::Extraction("no extractor available".into())))
+    Err(Error::Extraction(if errs.is_empty() {
+        "no extractor available".into()
+    } else {
+        errs.join(" | ")
+    }))
 }
 
 // ---------- 内嵌实现 ----------
@@ -144,10 +154,12 @@ fn extract_7z_external(path: &Path, dest: &Path) -> Result<()> {
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(["x", "-y", &format!("-o{}", dest.display())]);
     cmd.arg(path);
-    let status = run_with_timeout(no_window(cmd))
+    let (status, stderr) = run_with_timeout(no_window(cmd))
         .map_err(|e| Error::Extraction(e.to_string()))?;
     if !status.success() {
-        return Err(Error::Extraction(format!("7z exited with {status}")));
+        let detail = stderr.trim();
+        let last = detail.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        return Err(Error::Extraction(format!("7z exited with {status}: {last}")));
     }
     Ok(())
 }
@@ -207,16 +219,22 @@ fn no_window(cmd: std::process::Command) -> std::process::Command {
 }
 
 /// spawn 子进程并带超时轮询等待（超时不留僵尸进程：先 kill 再收尸）。
-fn run_with_timeout(mut cmd: std::process::Command) -> Result<std::process::ExitStatus> {
+/// 返回退出码与 stderr（截断到 4KB，用于生成可读错误）。
+fn run_with_timeout(mut cmd: std::process::Command) -> Result<(std::process::ExitStatus, String)> {
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::piped());
     let mut child = cmd
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| Error::Extraction(format!("spawn: {e}")))?;
+    let mut stderr_pipe = child.stderr.take();
     let start = Instant::now();
+    let status;
     loop {
         match child.try_wait()? {
-            Some(st) => return Ok(st),
+            Some(st) => {
+                status = st;
+                break;
+            }
             None => {
                 if start.elapsed() > timeout() {
                     let _ = child.kill();
@@ -230,6 +248,16 @@ fn run_with_timeout(mut cmd: std::process::Command) -> Result<std::process::Exit
             }
         }
     }
+    // 进程已退出，读管道不会阻塞
+    let mut buf = String::new();
+    if let Some(p) = stderr_pipe.as_mut() {
+        let mut raw = Vec::new();
+        if std::io::Read::read_to_end(p, &mut raw).is_ok() {
+            raw.truncate(4096);
+            buf = String::from_utf8_lossy(&raw).to_string();
+        }
+    }
+    Ok((status, buf))
 }
 
 fn extract_external(tool: &str, args: &[String]) -> Result<()> {
@@ -238,26 +266,41 @@ fn extract_external(tool: &str, args: &[String]) -> Result<()> {
     }
     let mut cmd = std::process::Command::new(tool);
     cmd.args(args);
-    let status = run_with_timeout(no_window(cmd))
+    let (status, stderr) = run_with_timeout(no_window(cmd))
         .map_err(|e| Error::Extraction(e.to_string()))?;
     if !status.success() {
-        return Err(Error::Extraction(format!("{tool} exited with {status}")));
+        let detail = stderr.trim();
+        if detail.is_empty() {
+            return Err(Error::Extraction(format!("{tool} exited with {status}")));
+        }
+        // 优先取首条含 "error"/"failed" 的行（主错误行，通常在摘要之前），否则取最后一行非空输出
+        let last = detail
+            .lines()
+            .find(|l| {
+                let t = l.to_lowercase();
+                (t.contains("error") || t.contains("failed")) && !t.is_empty()
+            })
+            .or_else(|| detail.lines().rev().find(|l| !l.trim().is_empty()))
+            .unwrap_or(detail);
+        return Err(Error::Extraction(format!("{tool}: {last}")));
     }
     Ok(())
 }
 
 fn extract_msi(path: &Path, dest: &Path) -> Result<()> {
-    if !cfg!(windows) {
-        return Err(Error::Extraction("msiexec requires Windows".into()));
+    if cfg!(windows) {
+        let mut cmd = std::process::Command::new("msiexec");
+        cmd.args(["/a", &path.display().to_string(), "/qb", &format!("TARGETDIR={}", dest.display())]);
+        let (status, _stderr) = run_with_timeout(no_window(cmd))
+            .map_err(|e| Error::Extraction(e.to_string()))?;
+        if !status.success() {
+            return Err(Error::Extraction(format!("msiexec exited with {status}")));
+        }
+        Ok(())
+    } else {
+        // 非 Windows（CI/开发环境）：用 msitools 的 msiextract 做管理解包
+        extract_external("msiextract", &["--directory".into(), dest.display().to_string(), path.display().to_string()])
     }
-    let mut cmd = std::process::Command::new("msiexec");
-    cmd.args(["/a", &path.display().to_string(), "/qb", &format!("TARGETDIR={}", dest.display())]);
-    let status = run_with_timeout(no_window(cmd))
-        .map_err(|e| Error::Extraction(e.to_string()))?;
-    if !status.success() {
-        return Err(Error::Extraction(format!("msiexec exited with {status}")));
-    }
-    Ok(())
 }
 
 fn which(tool: &str) -> Option<PathBuf> {

@@ -9,7 +9,7 @@ mod fluent;
 use eframe::egui;
 use egui::Color32;
 use pxe_core::{builder, config::Config, detect, extract};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 #[derive(Default)]
@@ -181,16 +181,23 @@ impl App {
                 send(Msg::Progress(0.15, "正在解压…".into()));
 
                 let (source, standalone, via);
-                if d.is_installer() || d.kind.is_archive() {
-                    let tmp = std::env::temp_dir().join(format!("pxe_extract_{}", std::process::id()));
+                let tmp = std::env::temp_dir().join(format!("pxe_extract_{}", std::process::id()));
+                let using_tmp = d.is_installer() || d.kind.is_archive();
+                if using_tmp {
                     match extract::extract(&file, d.kind, &tmp) {
                         Ok(r) => {
                             via = r.via.clone();
                             source = r.dir;
                             standalone = false;
                         }
+                        Err(e) if d.kind.is_installer() => {
+                            // 与 CLI 一致：真安装包解不开就报错，绝不把安装包本体当应用
+                            let _ = std::fs::remove_dir_all(&tmp);
+                            return Err(format!("解包失败（{}）：{e}", d.kind.label()));
+                        }
                         Err(e) => {
                             send(Msg::Log(format!("解压失败（{e}），按独立程序处理")));
+                            let _ = std::fs::remove_dir_all(&tmp);
                             via = "none".into();
                             source = file.clone();
                             standalone = true;
@@ -206,21 +213,40 @@ impl App {
                 let cfg = Config::default();
                 extract::set_timeout(cfg.timeout_seconds);
                 let r = builder::build(&source, &out, &name, standalone, &via, pack_kind, &cfg, None)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string());
+                if using_tmp {
+                    let _ = std::fs::remove_dir_all(&tmp);
+                }
                 send(Msg::Progress(1.0, "完成".into()));
-                Ok(r)
+                r
             })();
             send(Msg::Done(result));
         });
     }
 }
 
-fn derive_name(file: &PathBuf) -> String {
-    let mut stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("App").to_string();
-    for t in ["setup", "install", "installer"] {
-        stem = stem.to_lowercase().replace(t, "");
+fn derive_name(file: &Path) -> String {
+    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("App").to_string();
+    let lower = stem.to_lowercase();
+    let mut out = String::new();
+    let mut skip_until = 0usize;
+    for (i, _) in stem.char_indices() {
+        if i < skip_until {
+            continue;
+        }
+        if lower[i..].starts_with("installer") {
+            skip_until = i + "installer".len();
+        } else if lower[i..].starts_with("install") {
+            skip_until = i + "install".len();
+        } else if lower[i..].starts_with("setup") {
+            skip_until = i + "setup".len();
+        } else {
+            let ch = stem[i..].chars().next().unwrap();
+            out.push(ch);
+            skip_until = i + ch.len_utf8();
+        }
     }
-    let stem = stem.trim_matches(|c: char| c == '-' || c == '_' || c == ' ');
+    let stem = out.trim_matches(|c: char| c == '-' || c == '_' || c == ' ');
     if stem.is_empty() {
         "App".into()
     } else {
