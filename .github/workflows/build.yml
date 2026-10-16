@@ -1,0 +1,40 @@
+name: build-windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Rust (pxe-cli + pxe-stub)
+        shell: pwsh
+        run: |
+          cargo build --release -p pxe-cli -p pxe-stub
+          Copy-Item target\release\pxe.exe app\
+          Copy-Item target\release\pxe-stub.exe app\
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build Flutter Windows
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: Bundle
+        shell: pwsh
+        run: |
+          $out = "build\windows\x64\runner\Release"
+          Copy-Item app\pxe.exe $out\
+          Copy-Item app\pxe-stub.exe $out\
+          Compress-Archive -Path "$out\*" -DestinationPath PortableXE-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PortableXE-windows
+          path: PortableXE-windows.zip

@@ -1,0 +1,18 @@
+name: portablexe
+description: PortableXE — 把 Windows 安装包变成便携应用（Flutter Material 3 前端，调用 pxe-cli）
+publish_to: "none"
+version: 0.2.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_selector: ^1.0.3
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

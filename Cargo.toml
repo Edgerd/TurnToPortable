@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pxe-core",
+    "crates/pxe-cli",
+    "crates/pxe-stub",
+    "crates/pxe-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+goblin = "0.9"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sevenz-rust = "0.6"
+sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+eframe = "0.32"
+egui = "0.32"

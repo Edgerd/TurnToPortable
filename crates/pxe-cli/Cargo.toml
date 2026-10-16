@@ -1,0 +1,16 @@
+[package]
+name = "pxe-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pxe"
+path = "src/main.rs"
+
+[dependencies]
+pxe-core = { path = "../pxe-core" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
