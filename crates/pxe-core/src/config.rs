@@ -15,6 +15,8 @@ pub struct Config {
     pub bundle_redist_note: bool,
     /// 优先使用编译好的原生 stub 启动器（pxe-stub.exe）
     pub prefer_native_stub: bool,
+    /// 深度解包：解压后继续解内层最大的压缩档，直到解出主程序（exe）即停止
+    pub deep_extract: bool,
 }
 
 impl Default for Config {
@@ -25,6 +27,7 @@ impl Default for Config {
             timeout_seconds: 300,
             bundle_redist_note: true,
             prefer_native_stub: true,
+            deep_extract: true,
         }
     }
 }
@@ -69,12 +72,14 @@ mod tests {
         // output_dir        -> cli/gui 默认输出
         // bundle_redist_note -> builder::write_redist_note
         // prefer_native_stub -> builder::write_launchers
+        // deep_extract      -> extract::set_deep_extract（cli/gui 调用前设置）
         let _ = (
             c.output_dir.clone(),
             c.compression_level,
             c.timeout_seconds,
             c.bundle_redist_note,
             c.prefer_native_stub,
+            c.deep_extract,
         );
         assert!((1..=9).contains(&c.compression_level));
     }

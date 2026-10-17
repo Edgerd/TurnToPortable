@@ -108,9 +108,9 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
     // 流式检测：不整读大文件。
     // - 头部 4MB 覆盖：魔数 / PE 头 / NSIS / InstallShield / 7z-SFX stub
     // - 尾部 1KB 覆盖：Inno Setup 的 overlay 尾部 ID
-    // - ZIP 家族需要 EOCD（在文件末尾），小文件全读，大文件跳过深度嗅探
+    // - ZIP 家族需要 EOCD（在文件末尾），zip crate 自行 seek
+    // - SHA256 恒为流式计算（原实现 ≤256MB 时整读进内存，白白多占一份文件大小的 RAM）
     const HEAD_MAX: u64 = 4 * 1024 * 1024;
-    const FULL_READ_MAX: u64 = 256 * 1024 * 1024;
 
     let head_len = len.min(HEAD_MAX) as usize;
     let mut head = vec![0u8; head_len];
@@ -131,12 +131,7 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
         head.clone()
     };
 
-    let sha256 = if len <= FULL_READ_MAX {
-        crate::extract::sha256_hex(&std::fs::read(path)?)
-    } else {
-        // 大文件：流式计算，不整读
-        sha256_file_streaming(path)?
-    };
+    let sha256 = sha256_file_streaming(path)?;
 
     // --- 1. 魔数检测（最高优先级） ---
     if head.starts_with(MAGIC_MSI) {
@@ -253,18 +248,26 @@ fn detect_pe_installers(head: &[u8], tail: &[u8], pe_info: &pe::PeInfo) -> Optio
         return Some(InstallerKind::WiXBurn);
     }
 
-    // NSIS: NullsoftInst 标记（通常在第一个节头部区域，头部 4MB 内必然覆盖）
+    // NSIS: NullsoftInst 标记。真实安装器位于 PE 头之后的第一个节数据；
+    // electron-builder 一类可到 ~100KB，取头 1MB 窗口（自身等无关二进制的
+    // 相同字节序列在数 MB 深处，不会命中）。
+    // 注意：签名 EF BE AD DE 可能在压缩数据中先行出现，须遍历窗口内所有
+    // 命中位置，直到某个后面紧跟 "NullsoftInst"。
     const NSIS_SIG: &[u8] = &[0xEF, 0xBE, 0xAD, 0xDE];
-    if let Some(pos) = find(head, NSIS_SIG, 0, head.len().min(0x4000)) {
+    const NSIS_WINDOW: usize = 1024 * 1024;
+    let mut from = 0;
+    while let Some(pos) = find(head, NSIS_SIG, from, head.len().min(NSIS_WINDOW)) {
         if head[pos + 4..].starts_with(b"NullsoftInst") {
             return Some(InstallerKind::Nsis);
         }
+        from = pos + 1;
     }
 
-    // Inno Setup: Inno ID `rDlPtS`。多数版本在文件尾部 overlay，但部分发行版
-    // （如 VSCodium 6.5+）在头部数据区；头尾都查，避免漏检。
+    // Inno Setup: Inno ID `rDlPtS`。多数版本在文件尾部 overlay（尾部 1KB 必覆盖），
+    // 部分发行版（如 VSCodium 6.5+）在头部数据区；头 1MB 内都查，避免漏检，
+    // 且不会匹配自身/无关二进制里深处的相同字节序列。
     if find(tail, b"rDlPtS", 0, tail.len()).is_some()
-        || find(head, b"rDlPtS", 0, head.len()).is_some()
+        || find(head, b"rDlPtS", 0, head.len().min(1024 * 1024)).is_some()
     {
         return Some(InstallerKind::InnoSetup);
     }
@@ -274,8 +277,9 @@ fn detect_pe_installers(head: &[u8], tail: &[u8], pe_info: &pe::PeInfo) -> Optio
         return Some(InstallerKind::InstallShield);
     }
 
-    // 7z SFX：PE stub 内嵌 7z 魔数（stub 在文件头部，不再全文件扫描）
-    if find(head, MAGIC_7Z, 0, head.len()).is_some() {
+    // 7z SFX：魔数紧随 PE stub 之后（真实 SFX 的 stub < 1MB；收窄窗口避免
+    // 命中压缩数据/常量表里偶然出现的相同字节，如 pxe 自身内嵌的检测常量）
+    if find(head, MAGIC_7Z, 0, head.len().min(1024 * 1024)).is_some() {
         return Some(InstallerKind::Sfx7z);
     }
 

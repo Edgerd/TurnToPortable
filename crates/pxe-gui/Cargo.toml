@@ -13,3 +13,7 @@ pxe-core = { path = "../pxe-core" }
 eframe = { workspace = true }
 egui = { workspace = true }
 rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+winresource = "0.1"

@@ -110,22 +110,10 @@ pub fn find_main_exe(app_dir: &Path, app_name: &str) -> Option<PathBuf> {
 }
 
 fn collect_exes(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    fn rec(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                if depth < 3 {
-                    rec(&p, depth + 1, out);
-                }
-            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) {
-                out.push(p);
-            }
-        }
-    }
-    rec(dir, 0, &mut out);
-    out
+    crate::fsx::walk_files(dir, 3)
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")))
+        .collect()
 }
 
 /// 模板测试：确保 bat 语法健康（无非法 `return`、以 exit /b 结尾）

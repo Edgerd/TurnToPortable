@@ -48,15 +48,31 @@ pub fn create_structure(output_dir: &Path, app_name: &str) -> Result<PathBuf> {
 }
 
 /// 把解压内容（或单 exe）拷入 App/。
+/// 管线场景（source 是 pxe 的临时解压目录）直接移动而非复制——
+/// 对 GB 级应用省一整次全量 IO；用户自己的目录绝不移动，仍然复制。
 pub fn fill_app_dir(source: &Path, root: &Path, _is_standalone: bool) -> Result<()> {
     let app = root.join("App");
     if !source.is_dir() {
         let dest = app.join(source.file_name().ok_or_else(|| Error::InvalidPackage("no file name".into()))?);
         std::fs::copy(source, &dest)?;
+        return Ok(());
+    }
+    if is_pipeline_tmp(source) {
+        crate::fsx::move_dir_contents(source, &app)?;
     } else {
         copy_dir_contents(source, &app)?;
     }
     Ok(())
+}
+
+/// source 是否为管线自己创建的临时解压目录（仅这种目录允许移动）
+fn is_pipeline_tmp(source: &Path) -> bool {
+    source.starts_with(std::env::temp_dir())
+        && source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with("pxe_extract_"))
+            .unwrap_or(false)
 }
 
 /// 生成启动器。优先使用原生 stub（无黑窗、单文件），回退到 bat/ps1。

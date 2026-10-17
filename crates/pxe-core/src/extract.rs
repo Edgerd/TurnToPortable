@@ -18,6 +18,23 @@ pub fn set_timeout(secs: u64) {
     TIMEOUT_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// 深度解包开关：解压成功后继续解内层"最大的压缩档"，直到解出主程序（exe）。
+/// 默认开启；可通过配置 / CLI / GUI 关闭。
+static DEEP_EXTRACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_deep_extract(on: bool) {
+    DEEP_EXTRACT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn deep_extract_enabled() -> bool {
+    DEEP_EXTRACT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 深度解包每层最多尝试的候选文件数
+const DEEP_MAX_CANDIDATES: usize = 5;
+/// 深度解包最大层数（安全上限，防止压缩包套压缩包死循环）
+const DEEP_MAX_LAYERS: usize = 8;
+
 fn timeout() -> Duration {
     Duration::from_secs(TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -91,25 +108,30 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                 if *k == InstallerKind::InnoSetup {
                     let _ = flatten_app_dir(dest);
                 }
-                // electron-builder 的 NSIS 布局：外层壳里只有 $PLUGINSDIR/app-64.7z，
-                // 真正的主程序在内层 7z —— 检测到就二次解包（embedded / external 解出的都适用）
-                if !has_exe_outside_pluginsdir(dest) {
-                    if let Some(inner) = find_pluginsdir_7z(dest) {
-                        let tmp = dest.join(".__pxe_inner");
-                        let _ = std::fs::remove_dir_all(&tmp);
-                        if sevenz_rust::decompress_file(&inner, &tmp).is_ok() && validate(&tmp) {
-                            // 清空 dest（保留 tmp），再把内层内容移进来
-                            for e in std::fs::read_dir(dest)?.flatten() {
-                                if e.file_name() != ".__pxe_inner" {
-                                    let p = e.path();
-                                    if p.is_dir() { std::fs::remove_dir_all(&p)?; } else { std::fs::remove_file(&p)?; }
+                if deep_extract_enabled() {
+                    // 深度解包：反复解"最大的压缩档候选"，直到解出主程序（exe）
+                    deep_unpack(dest);
+                } else {
+                    // electron-builder 的 NSIS 布局：外层壳里只有 $PLUGINSDIR/app-64.7z，
+                    // 真正的主程序在内层 7z —— 检测到就二次解包（embedded / external 解出的都适用）
+                    if !has_exe_outside_pluginsdir(dest) {
+                        if let Some(inner) = find_pluginsdir_7z(dest) {
+                            let tmp = dest.join(".__pxe_inner");
+                            let _ = std::fs::remove_dir_all(&tmp);
+                            if sevenz_rust::decompress_file(&inner, &tmp).is_ok() && validate(&tmp) {
+                                // 清空 dest（保留 tmp），再把内层内容移进来
+                                for e in std::fs::read_dir(dest)?.flatten() {
+                                    if e.file_name() != ".__pxe_inner" {
+                                        let p = e.path();
+                                        if p.is_dir() { std::fs::remove_dir_all(&p)?; } else { std::fs::remove_file(&p)?; }
+                                    }
                                 }
+                                copy_dir_contents(&tmp, dest)?;
+                                std::fs::remove_dir_all(&tmp)?;
+                                return Ok(Extracted { dir: dest.to_path_buf(), via: "nsis-app-7z".into() });
                             }
-                            copy_dir_contents(&tmp, dest)?;
-                            std::fs::remove_dir_all(&tmp)?;
-                            return Ok(Extracted { dir: dest.to_path_buf(), via: "nsis-app-7z".into() });
+                            let _ = std::fs::remove_dir_all(&tmp);
                         }
-                        let _ = std::fs::remove_dir_all(&tmp);
                     }
                 }
                 if validate(dest) {
@@ -157,6 +179,111 @@ fn flatten_app_dir(dest: &Path) -> Result<()> {
     Ok(())
 }
 
+// ---------- 深度解包 ----------
+
+/// 深度解包：每层在解压结果里找最大的压缩档文件按大小降序依次尝试（最多 5 个），
+/// 解出且校验通过就用内层内容替换当前目录；一旦目录里出现主程序 exe 就停止。
+/// 覆盖 electron-builder（$PLUGINSDIR/app-64.7z）、zip 套 zip、分卷合并后套壳等场景。
+fn deep_unpack(dest: &Path) {
+    for _ in 0..DEEP_MAX_LAYERS {
+        // 收集本层候选：按大小降序，最多取 5 个压缩档
+        let mut candidates: Vec<(u64, PathBuf)> = crate::fsx::walk_files(dest, 4)
+            .into_iter()
+            .filter(|p| is_deep_candidate(p))
+            .filter_map(|p| {
+                let sz = std::fs::metadata(&p).ok()?.len();
+                Some((sz, p))
+            })
+            .collect();
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates.truncate(DEEP_MAX_CANDIDATES);
+
+        // 已解出主程序 → 到此为止。判定：存在 $PLUGINSDIR 之外的 exe，
+        // 且它比剩余的最大压缩档候选更大（避免把 NSIS 壳里的卸载器
+        // /$R0 小 exe 误判成主程序而提前停止）。
+        if let Some(max_exe) = max_exe_outside_pluginsdir(dest) {
+            let max_cand = candidates.first().map(|(s, _)| *s).unwrap_or(0);
+            if max_exe > max_cand {
+                return;
+            }
+        }
+
+        let mut progressed = false;
+        for (_, cand) in candidates {
+            let tmp = dest.join(".__pxe_deep");
+            let _ = std::fs::remove_dir_all(&tmp);
+            let ok = try_extract_candidate(&cand, &tmp) && validate(&tmp);
+            if ok {
+                // 用内层内容替换当前目录（保留 tmp 自身）
+                if clear_dir_keep(dest, &tmp).is_ok() {
+                    progressed = true;
+                }
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+            if progressed {
+                break;
+            }
+        }
+        // 本层 5 个候选都解不动 → 结束
+        if !progressed {
+            return;
+        }
+    }
+}
+
+/// 深度解包候选：压缩档扩展名（不含 .exe —— 避免把主程序/安装器本体再拆一遍）
+fn is_deep_candidate(p: &Path) -> bool {
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    matches!(ext.as_str(), "7z" | "zip" | "tar" | "gz" | "tgz")
+}
+
+/// 按扩展名路由到内嵌解压器
+fn try_extract_candidate(path: &Path, tmp: &Path) -> bool {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let r = match ext.as_str() {
+        // 7z：内嵌优先（无依赖），失败回退外部 7z（sevenz_rust 不支持部分压缩方法）
+        "7z" => {
+            let embedded = extract_7z_embedded(path, tmp);
+            if embedded.is_ok() { embedded } else { extract_7z_external(path, tmp) }
+        }
+        "zip" => extract_zip(path, tmp),
+        "tar" => match std::fs::File::open(path) {
+            Ok(f) => extract_tar(std::io::BufReader::new(f), tmp),
+            Err(e) => Err(e.into()),
+        },
+        "tgz" => match std::fs::File::open(path) {
+            Ok(f) => extract_tar(flate2::read::MultiGzDecoder::new(f), tmp),
+            Err(e) => Err(e.into()),
+        },
+        "gz" => extract_gz(path, tmp),
+        _ => return false,
+    };
+    r.is_ok()
+}
+
+/// 清空 dest 但保留 tmp（tmp 是 dest 的子目录），再把 tmp 内容移到 dest
+fn clear_dir_keep(dest: &Path, tmp: &Path) -> Result<()> {
+    for e in std::fs::read_dir(dest)?.flatten() {
+        if e.path() == tmp {
+            continue;
+        }
+        let p = e.path();
+        if p.is_dir() {
+            std::fs::remove_dir_all(&p)?;
+        } else {
+            std::fs::remove_file(&p)?;
+        }
+    }
+    copy_dir_contents(tmp, dest)?;
+    Ok(())
+}
+
 // ---------- 内嵌实现 ----------
 
 fn extract_zip(path: &Path, dest: &Path) -> Result<()> {
@@ -190,18 +317,16 @@ fn extract_7z_external(path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 找 7z.exe：本程序同目录优先，其次 PATH
+/// 找 7z.exe：本程序同目录优先，其次 PATH（统一走 which）
 fn find_7z() -> Option<PathBuf> {
     let self_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    for dir in std::iter::once(self_dir).chain(std::env::split_paths(&std::env::var_os("PATH")?)) {
-        for name in ["7z.exe", "7za.exe", "7z"] {
-            let p = dir.join(name);
-            if p.is_file() {
-                return Some(p);
-            }
+    for name in ["7z.exe", "7za.exe"] {
+        let p = self_dir.join(name);
+        if p.is_file() {
+            return Some(p);
         }
     }
-    None
+    which("7z").or_else(|| which("7za"))
 }
 
 fn extract_tar<R: std::io::Read>(reader: R, dest: &Path) -> Result<()> {
@@ -355,7 +480,7 @@ pub fn validate(dir: &Path) -> bool {
         return false;
     }
 
-    for entry in walk(dir, 4) {
+    for entry in crate::fsx::walk_files(dir, 4) {
         let name = entry
             .file_name()
             .map(|s| s.to_string_lossy().to_lowercase())
@@ -377,26 +502,6 @@ pub fn validate(dir: &Path) -> bool {
     }
 
     (has_pe || has_manifest) && fragment_sections <= 3
-}
-
-fn walk(dir: &Path, max_depth: usize) -> impl Iterator<Item = PathBuf> {
-    let mut out = Vec::new();
-    fn rec(dir: &Path, depth: usize, max: usize, out: &mut Vec<PathBuf>) {
-        if depth > max {
-            return;
-        }
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                rec(&p, depth + 1, max, out);
-            } else {
-                out.push(p);
-            }
-        }
-    }
-    rec(dir, 0, max_depth, &mut out);
-    out.into_iter()
 }
 
 fn clear_dir(dir: &Path) -> Result<()> {
@@ -425,27 +530,17 @@ fn find_pluginsdir_7z(dest: &Path) -> Option<PathBuf> {
 
 /// 除 $PLUGINSDIR 外是否存在可执行文件（有则说明外层就是程序本体，无需二次解包）
 fn has_exe_outside_pluginsdir(dir: &Path) -> bool {
-    fn rec(dir: &Path, depth: usize) -> bool {
-        if depth > 4 {
-            return false;
-        }
-        let Ok(rd) = std::fs::read_dir(dir) else { return false };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                if p.file_name().map(|n| n == "$PLUGINSDIR").unwrap_or(false) {
-                    continue;
-                }
-                if rec(&p, depth + 1) {
-                    return true;
-                }
-            } else if p.extension().map(|x| x.eq_ignore_ascii_case("exe")).unwrap_or(false) {
-                return true;
-            }
-        }
-        false
-    }
-    rec(dir, 0)
+    max_exe_outside_pluginsdir(dir).is_some()
+}
+
+/// $PLUGINSDIR 之外最大的 exe 体积（不存在则 None）。
+/// 复用统一遍历，跳过 $PLUGINSDIR（安装器辅助 exe 所在）与深解包临时目录。
+fn max_exe_outside_pluginsdir(dir: &Path) -> Option<u64> {
+    crate::fsx::walk_files_skipping(dir, 4, &["$PLUGINSDIR", ".__pxe_deep"])
+        .into_iter()
+        .filter(|p| p.extension().map(|x| x.eq_ignore_ascii_case("exe")).unwrap_or(false))
+        .filter_map(|p| std::fs::metadata(&p).ok().map(|m| m.len()))
+        .max()
 }
 
 #[cfg(test)]

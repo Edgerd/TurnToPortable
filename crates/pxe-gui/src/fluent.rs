@@ -67,22 +67,27 @@ impl FluentTheme {
             ..Visuals::dark()
         };
 
-        // 字阶：Type Ramp —— 优先加载系统中文黑体，避免 CJK 显示为豆腐块
+        // 字阶：Type Ramp —— 优先加载系统中文黑体，避免 CJK 显示为豆腐块。
+        // Proportional 与 Monospace 分别取首选字体（此前 mono 字体被插到
+        // Proportional 首位，正文会变成等宽渲染）。
         let mut fonts = egui::FontDefinitions::default();
-        for (id, candidates) in [
-            ("cn", ["msyh.ttc", "msyh.ttf", "simhei.ttf", "simsum.ttc", "PingFang SC.ttf"].as_slice()),
-            ("cn_mono", ["msyh.ttc", "simhei.ttf"].as_slice()),
-        ] {
-            let data = ["C:\\Windows\\Fonts\\"]
-                .iter()
-                .chain(["/usr/share/fonts/", "/System/Library/Fonts/"].iter())
-                .find_map(|p| candidates.iter().find_map(|n| std::fs::read(format!("{p}{n}")).ok()));
-            if let Some(data) = data {
-                fonts.font_data.insert(id.into(), egui::FontData::from_owned(data).into());
-                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                    fonts.families.entry(family).or_default().insert(0, id.into());
+        let find_font = |candidates: &[&str]| -> Option<Vec<u8>> {
+            for p in ["C:\\Windows\\Fonts\\", "/usr/share/fonts/", "/System/Library/Fonts/"] {
+                for n in candidates {
+                    if let Ok(data) = std::fs::read(format!("{p}{n}")) {
+                        return Some(data);
+                    }
                 }
             }
+            None
+        };
+        if let Some(data) = find_font(&["msyh.ttc", "msyh.ttf", "simhei.ttf", "simsum.ttc", "PingFang SC.ttf"]) {
+            fonts.font_data.insert("cn".into(), egui::FontData::from_owned(data).into());
+            fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "cn".into());
+        }
+        if let Some(data) = find_font(&["msyh.ttc", "simhei.ttf", "PingFang SC.ttf"]) {
+            fonts.font_data.insert("cn_mono".into(), egui::FontData::from_owned(data).into());
+            fonts.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "cn_mono".into());
         }
         ctx.set_fonts(fonts);
         let mut text_styles = style.text_styles.clone();

@@ -8,7 +8,7 @@ mod fluent;
 
 use eframe::egui;
 use egui::Color32;
-use pxe_core::{builder, config::Config, detect, extract};
+use pxe_core::{builder, config::Config, pipeline};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
@@ -18,12 +18,16 @@ struct App {
     app_name: String,
     output_dir: String,
     pack: builder::PackKind,
+    /// 深度解包开关
+    deep_extract: bool,
     log: Vec<String>,
     progress: f32,
     status: String,
     busy: bool,
     tx: Option<mpsc::Sender<Msg>>,
     rx: Option<mpsc::Receiver<Msg>>,
+    /// 界内 logo 纹理（首次绘制时加载）
+    logo: Option<egui::TextureHandle>,
 }
 
 enum Msg {
@@ -72,8 +76,24 @@ impl App {
             .frame(egui::Frame::NONE.inner_margin(20.0))
             .show(ctx, |ui| {
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("PortableXE").size(26.0).strong());
-                fluent::subtle(ui, "把 Windows 安装包变成便携应用 — Rust 版");
+                ui.horizontal(|ui| {
+                    // 界内 logo（纸箱图标）
+                    let logo = self.logo.get_or_insert_with(|| {
+                        let icon = app_icon();
+                        let tex = egui::ColorImage::from_rgba_unmultiplied(
+                            [icon.width as usize, icon.height as usize],
+                            &icon.rgba,
+                        );
+                        ctx.load_texture("pxe_logo", tex, egui::TextureOptions::default())
+                    });
+                    ui.add(
+                        egui::Image::new(&*logo).fit_to_exact_size(egui::vec2(40.0, 40.0)),
+                    );
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("PortableXE").size(26.0).strong());
+                        fluent::subtle(ui, "把 Windows 安装包变成便携应用 — Rust 版");
+                    });
+                });
                 ui.add_space(16.0);
 
                 // 输入区
@@ -119,6 +139,12 @@ impl App {
                         ui.selectable_value(&mut self.pack, k, label);
                     }
                 });
+
+                ui.add_space(6.0);
+                ui.checkbox(
+                    &mut self.deep_extract,
+                    "深度解包（自动解内层最大的压缩档，解出主程序即停止）",
+                );
 
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
@@ -172,87 +198,21 @@ impl App {
         let name = self.app_name.clone();
         let out = PathBuf::from(&self.output_dir);
         let pack_kind = self.pack;
+        let mut cfg = Config::default();
+        cfg.deep_extract = self.deep_extract;
         std::thread::spawn(move || {
             let send = |m: Msg| tx.send(m).ok();
-            send(Msg::Progress(0.05, "正在识别…".into()));
-            let result = (|| -> Result<builder::BuildOutcome, String> {
-                let d = detect::detect(&file).map_err(|e| e.to_string())?;
-                send(Msg::Log(format!("识别结果：{}", d.kind.label())));
-                send(Msg::Progress(0.15, "正在解压…".into()));
-
-                let (source, standalone, via);
-                let tmp = std::env::temp_dir().join(format!("pxe_extract_{}", std::process::id()));
-                let using_tmp = d.is_installer() || d.kind.is_archive();
-                if using_tmp {
-                    match extract::extract(&file, d.kind, &tmp) {
-                        Ok(r) => {
-                            via = r.via.clone();
-                            source = r.dir;
-                            standalone = false;
-                        }
-                        Err(e) if d.kind.is_installer() => {
-                            // 与 CLI 一致：真安装包解不开就报错，绝不把安装包本体当应用
-                            let _ = std::fs::remove_dir_all(&tmp);
-                            return Err(format!("解包失败（{}）：{e}", d.kind.label()));
-                        }
-                        Err(e) => {
-                            send(Msg::Log(format!("解压失败（{e}），按独立程序处理")));
-                            let _ = std::fs::remove_dir_all(&tmp);
-                            via = "none".into();
-                            source = file.clone();
-                            standalone = true;
-                        }
-                    }
-                } else {
-                    via = "standalone".into();
-                    source = file.clone();
-                    standalone = true;
-                }
-
-                send(Msg::Progress(0.5, "正在生成…".into()));
-                let cfg = Config::default();
-                extract::set_timeout(cfg.timeout_seconds);
-                let r = builder::build(&source, &out, &name, standalone, &via, pack_kind, &cfg, None)
-                    .map_err(|e| e.to_string());
-                if using_tmp {
-                    let _ = std::fs::remove_dir_all(&tmp);
-                }
-                send(Msg::Progress(1.0, "完成".into()));
-                r
-            })();
+            let result = pipeline::run(&file, &name, &out, pack_kind, None, &cfg, &mut |p, msg| {
+                send(Msg::Progress(p, msg.to_string()));
+            })
+            .map_err(|e| e.to_string());
             send(Msg::Done(result));
         });
     }
 }
 
 fn derive_name(file: &Path) -> String {
-    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("App").to_string();
-    let lower = stem.to_lowercase();
-    let mut out = String::new();
-    let mut skip_until = 0usize;
-    for (i, _) in stem.char_indices() {
-        if i < skip_until {
-            continue;
-        }
-        if lower[i..].starts_with("installer") {
-            skip_until = i + "installer".len();
-        } else if lower[i..].starts_with("install") {
-            skip_until = i + "install".len();
-        } else if lower[i..].starts_with("setup") {
-            skip_until = i + "setup".len();
-        } else {
-            let ch = stem[i..].chars().next().unwrap();
-            out.push(ch);
-            skip_until = i + ch.len_utf8();
-        }
-    }
-    let stem = out.trim_matches(|c: char| c == '-' || c == '_' || c == ' ');
-    if stem.is_empty() {
-        "App".into()
-    } else {
-        let mut c = stem.chars();
-        c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-    }
+    pipeline::derive_name(file)
 }
 
 fn main() -> eframe::Result {
@@ -260,7 +220,8 @@ fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([720.0, 560.0])
-            .with_title("PortableXE (Rust)"),
+            .with_title("PortableXE (Rust)")
+            .with_icon(app_icon()),
         ..Default::default()
     };
     eframe::run_native(
@@ -270,8 +231,21 @@ fn main() -> eframe::Result {
             theme.apply(&_cc.egui_ctx);
             Ok(Box::new(App {
                 output_dir: Config::default().output_dir.display().to_string(),
+                deep_extract: true,
                 ..Default::default()
             }))
         }),
     )
+}
+
+/// 内嵌的应用图标（纸箱）。窗口图标 + 界内 logo 共用同一份解码结果。
+fn app_icon() -> egui::IconData {
+    const PNG: &[u8] = include_bytes!("../assets/app_icon.png");
+    let img = image::load_from_memory(PNG).expect("embedded app icon must decode");
+    let rgba = img.to_rgba8();
+    egui::IconData {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    }
 }

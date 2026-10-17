@@ -12,8 +12,10 @@ pub mod config;
 pub mod detect;
 pub mod error;
 pub mod extract;
+pub mod fsx;
 pub mod launcher;
 pub mod pe;
+pub mod pipeline;
 
 pub use detect::{detect, Detection, InstallerKind};
 pub use error::{Error, Result};

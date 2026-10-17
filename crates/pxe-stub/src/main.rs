@@ -65,12 +65,15 @@ fn run() -> Result<(), String> {
 
     append_log(&format!("launching {}", exe.display()));
 
-    // PATH 前置 App/Dependencies
-    if let Some(deps) = std::env::var_os("PATH").map(std::path::PathBuf::from) {
-        let mut new_path = app_dir.join("Dependencies");
-        new_path.push(if cfg!(windows) { ";" } else { ":" });
-        new_path.push(&deps);
-        std::env::set_var("PATH", &new_path);
+    // PATH 前置 App/Dependencies（join_paths 正确处理分隔符；原实现用
+    // PathBuf::push 绝对路径会整体替换 PATH，前缀丢失）
+    if let Some(old) = std::env::var_os("PATH") {
+        let deps = app_dir.join("Dependencies");
+        if let Ok(joined) = std::env::join_paths(
+            std::iter::once(deps).chain(std::env::split_paths(&old)),
+        ) {
+            std::env::set_var("PATH", joined);
+        }
     }
 
     let mut cmd = std::process::Command::new(&exe);
