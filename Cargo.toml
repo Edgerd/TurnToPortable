@@ -13,7 +13,7 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-goblin = "0.9"
+goblin = "0.10"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 sevenz-rust2 = "0.24"
 sha2 = "0.10"
