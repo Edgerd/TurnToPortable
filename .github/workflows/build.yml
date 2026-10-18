@@ -14,7 +14,7 @@ jobs:
       # artifact / zip 文件名带版本：tag 构建时为 v* 版本号，分支构建为分支名
       ARTIFACT: PortableXE-${{ github.ref_name }}-windows.zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Format check
         shell: pwsh
