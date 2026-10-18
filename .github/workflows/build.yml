@@ -74,7 +74,7 @@ jobs:
           Copy-Item "7zdist\7-zip-x64\License.txt" $out\7-zip-license.txt
           Compress-Archive -Path "$out\*" -DestinationPath "$env:ARTIFACT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT }}
           path: ${{ env.ARTIFACT }}
