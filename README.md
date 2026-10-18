@@ -51,6 +51,19 @@
 
 运行 `pxe-gui.exe`：选择安装包 → 填应用名 → 选打包形态 → 构建，进度实时显示。
 
+## 外部工具（全部可选回退）
+
+内嵌解压器（zip/7z/tar.gz）无任何依赖。以下外部工具仅在对应内嵌方案失败时启用，放到 pxe.exe 同目录即可：
+
+| 工具 | 用途 |
+|---|---|
+| `7z.exe` + `7z.dll` | NSIS 等格式的回退解包（发布包已附带 NSIS 增强版构建） |
+| `innoextract` | Inno Setup 优先解包器（≤6.3） |
+| `innounp` | Inno Setup 6.4+ 新版安装包 |
+| `ISx` | InstallShield（DevStudio 9 ~ IS 2021） |
+| `lessmsi` | MSI 回退（msiexec 失败/无权限/非 Windows） |
+| `unrar` | RAR 压缩包 |
+
 ## 构建产物示例
 
 ```

@@ -61,7 +61,9 @@ pub fn extract(
 
     let attempts: &[(InstallerKind, &str)] = match kind {
         InstallerKind::InnoSetup => &[
+            // innoextract 1.9 封顶（Inno 6.4 之前），新版走 innounp
             (InstallerKind::InnoSetup, "innoextract"),
+            (InstallerKind::InnoSetup, "innounp"),
             (InstallerKind::Sfx7z, "embedded-7z"),
         ],
         InstallerKind::Nsis => &[
@@ -70,9 +72,15 @@ pub fn extract(
         ],
         InstallerKind::Sfx7z | InstallerKind::InstallShield | InstallerKind::WiXBurn => &[
             (InstallerKind::Sfx7z, "embedded-7z"),
+            // InstallShield 专有容器（DevStudio 9 ~ IS 2021）
+            (InstallerKind::InstallShield, "ISx"),
             (InstallerKind::Nsis, "external-7z"),
         ],
-        InstallerKind::Msi => &[(InstallerKind::Msi, "msiexec")],
+        InstallerKind::Msi => &[
+            // msiexec（Windows 内置）失败或不可用时回退 lessmsi（免 msiexec、跨平台）
+            (InstallerKind::Msi, "msiexec"),
+            (InstallerKind::Msi, "lessmsi"),
+        ],
         InstallerKind::Msix
         | InstallerKind::Appx
         | InstallerKind::Zip
@@ -92,7 +100,7 @@ pub fn extract(
     // 串联所有尝试的错误（主解包器在前 —— 通常信息量最大）
     let mut errs: Vec<String> = Vec::new();
     for (k, label) in attempts {
-        let r = match k {
+        let r = match *k {
             InstallerKind::Zip => extract_zip(path, dest),
             InstallerKind::Sfx7z => extract_7z_embedded(path, dest),
             InstallerKind::Nsis => extract_7z_external(path, dest, opts),
@@ -113,17 +121,6 @@ pub fn extract(
                 ],
                 opts,
             ),
-            InstallerKind::InnoSetup => extract_external(
-                "innoextract",
-                &[
-                    "-d".into(),
-                    dest.display().to_string(),
-                    "-s".into(),
-                    path.display().to_string(),
-                ],
-                opts,
-            ),
-            InstallerKind::Msi => extract_msi(path, dest, opts),
             InstallerKind::Rar => extract_external(
                 "unrar",
                 &[
@@ -133,7 +130,16 @@ pub fn extract(
                 ],
                 opts,
             ),
-            _ => continue,
+            // 同一 Kind 可能有多个外部工具候选（innoextract/innounp、msiexec/lessmsi），
+            // 具体工具由 label 决定
+            _ => match *label {
+                "innoextract" => extract_innoextract(path, dest, opts),
+                "innounp" => extract_innounp(path, dest, opts),
+                "ISx" => extract_isx(path, dest, opts),
+                "msiexec" => extract_msi(path, dest, opts),
+                "lessmsi" => extract_lessmsi(path, dest, opts),
+                _ => continue,
+            },
         };
         match r {
             Ok(()) => {
@@ -211,7 +217,10 @@ fn flatten_app_dir(dest: &Path) -> Result<()> {
     let is_app_dir = only.is_dir()
         && only
             .file_name()
-            .map(|n| n.eq_ignore_ascii_case("app"))
+            .map(|n| {
+                let n = n.to_string_lossy();
+                n.eq_ignore_ascii_case("app") || n.eq_ignore_ascii_case("{app}")
+            })
             .unwrap_or(false);
     if !is_app_dir {
         return Ok(());
@@ -221,6 +230,26 @@ fn flatten_app_dir(dest: &Path) -> Result<()> {
     }
     std::fs::remove_dir(only)?;
     Ok(())
+}
+
+/// 展平"dest 下只有一个目录"的布局（外部工具以 cwd 方式解包时的常见输出）：
+/// 把唯一子目录的内容上移一层。dest 为空或不只一个条目时不动。
+fn flatten_single_dir(dest: &Path) {
+    let Ok(entries) = std::fs::read_dir(dest) else {
+        return;
+    };
+    let entries: Vec<_> = entries.flatten().collect();
+    if entries.len() != 1 || !entries[0].path().is_dir() {
+        return;
+    }
+    let only = entries[0].path();
+    let Ok(inner) = std::fs::read_dir(&only) else {
+        return;
+    };
+    for e in inner.flatten() {
+        let _ = std::fs::rename(e.path(), dest.join(e.file_name()));
+    }
+    let _ = std::fs::remove_dir(&only);
 }
 
 // ---------- 深度解包 ----------
@@ -495,6 +524,75 @@ fn extract_external(tool: &str, args: &[String], opts: &ExtractOptions) -> Resul
         return Err(Error::Extraction(format!("{tool}: {last}")));
     }
     Ok(())
+}
+
+fn extract_innoextract(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
+    extract_external(
+        "innoextract",
+        &[
+            "-d".into(),
+            dest.display().to_string(),
+            "-s".into(),
+            path.display().to_string(),
+        ],
+        opts,
+    )
+}
+
+/// innounp：支持新版 Inno Setup（innoextract 1.9 解不动的 6.4+）。
+/// 输出会带 {app} 前缀目录，成功后同样展平。
+fn extract_innounp(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
+    let r = extract_external(
+        "innounp",
+        &[
+            "-x".into(),
+            format!("-d{}", dest.display()),
+            path.display().to_string(),
+        ],
+        opts,
+    );
+    if r.is_ok() {
+        let _ = flatten_app_dir(dest);
+        flatten_single_dir(dest);
+    }
+    r
+}
+
+/// ISx：InstallShield 专有容器解包器（DevStudio 9 ~ InstallShield 2021）。
+/// 无 -d 参数，在工作目录解出 —— 用 cwd=dest，解出后把唯一子目录内容上移。
+fn extract_isx(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
+    if which("ISx").is_none() {
+        return Err(Error::Extraction("ISx not found in PATH".into()));
+    }
+    let mut cmd = std::process::Command::new("ISx");
+    cmd.arg(path);
+    cmd.current_dir(dest);
+    let (status, stderr) =
+        run_with_timeout(no_window(cmd), opts).map_err(|e| Error::Extraction(e.to_string()))?;
+    if !status.success() {
+        let detail = stderr.trim();
+        let last = detail
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("no output");
+        return Err(Error::Extraction(format!("ISx: {last}")));
+    }
+    flatten_single_dir(dest);
+    Ok(())
+}
+
+/// lessmsi：免 msiexec 的 MSI 解包（跨平台 / 无管理员权限场景的回退）。
+fn extract_lessmsi(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
+    extract_external(
+        "lessmsi",
+        &[
+            "x".into(),
+            path.display().to_string(),
+            dest.display().to_string(),
+        ],
+        opts,
+    )
 }
 
 fn extract_msi(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {

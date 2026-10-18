@@ -12,6 +12,13 @@
 6. clippy 清零：`pxe-gui` 移除未用 `Msg::Log`；`Config { ..Default }` 构造；`config::save` 去 `unwrap()`。
 7. 消除全局静态配置：`extract::TIMEOUT_SECS/DEEP_EXTRACT` 静态开关删除，改为 `ExtractOptions { timeout, deep_extract }` 显式参数，贯穿 extract/deep_unpack/外部工具超时；pipeline 由 cfg 构造，CLI Extract 分支同样显式传入。
 8. GUI↔CLI 协议升级：`pxe build --json` 输出 NDJSON 事件 `{"progress":0.15,"msg":"..."}`（serde_json）；Flutter 端加 `--json` 并解析 JSON 事件，移除旧 `[pxe|progress|...]` 文本协议。
+9. 格式支持增强（外部工具全部为可选回退，内嵌优先）：
+   - Inno Setup：回退链加 `innounp`（innoextract 1.9 解不动的 Inno 6.4+）；`flatten_app_dir` 兼容 innounp 的 `{app}` 输出目录
+   - InstallShield/WiX Burn：回退链加 `ISx`（DevStudio 9 ~ IS 2021），以 cwd=dest 方式运行 + `flatten_single_dir` 展平输出
+   - MSI：msiexec 失败后回退 `lessmsi`（免 msiexec、跨平台）
+   - CI：随包 7-Zip 换为 myfreeer/7z-build-nsis v26.04 构建（NSIS 支持更广）
+   - README 增加外部工具说明表
+   - 未做：unshield（只认 .cab/.hdr 组合，不适用于 setup.exe 直接解包）；uninno（Perl 参考实现，仅作将来 Rust 移植蓝本）
 
 ## 待办
 

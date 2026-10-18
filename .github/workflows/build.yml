@@ -50,10 +50,14 @@ jobs:
           $out = "app\build\windows\x64\runner\Release"
           Copy-Item app\pxe.exe $out\
           Copy-Item app\pxe-stub.exe $out\
-          # 随包分发 7-Zip 组件（NSIS 等格式需要；LGPL 许可允许再分发）
-          Copy-Item "C:\Program Files\7-Zip\7z.exe" $out\
-          Copy-Item "C:\Program Files\7-Zip\7z.dll" $out\
-          Copy-Item "C:\Program Files\7-Zip\license.txt" $out\7-zip-license.txt
+          # 随包分发 7-Zip 组件：用 myfreeer/7z-build-nsis 构建（NSIS 脚本支持更广；
+          # LGPL + unRAR 许可允许再分发）。仅用系统 7z 解开压缩包，产物用新构建。
+          $v = "26.04"
+          Invoke-WebRequest -Uri "https://github.com/myfreeer/7z-build-nsis/releases/download/$v/7z$($v.Replace('.','')).7z" -OutFile "7zdist.7z"
+          & "C:\Program Files\7-Zip\7z.exe" x -y -o"7zdist" "7zdist.7z" | Out-Null
+          Copy-Item "7zdist\7z.exe" $out\
+          Copy-Item "7zdist\7z.dll" $out\
+          Copy-Item "7zdist\License.txt" $out\7-zip-license.txt
           Compress-Archive -Path "$out\*" -DestinationPath PortableXE-windows.zip
 
       - uses: actions/upload-artifact@v4
