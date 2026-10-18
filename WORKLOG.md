@@ -19,6 +19,16 @@
    - CI：随包 7-Zip 换为 myfreeer/7z-build-nsis v26.04 构建（NSIS 支持更广）
    - README 增加外部工具说明表
    - 未做：unshield（只认 .cab/.hdr 组合，不适用于 setup.exe 直接解包）；uninno（Perl 参考实现，仅作将来 Rust 移植蓝本）
+10. 格式短板补齐（第二轮，全部内嵌优先、外部工具仅回退）：
+   - 新增 Kind：`MsixBundle`/`IExpress`/`TarXz`/`TarBz2`/`TarZst`/`Xz`/`Bz2`/`Zst`/`Iso`/`Udf`/`Wim`/`Msu`/`Split7z`/`SplitRar`/`SplitZip`
+   - MSIX/APPX bundle：detect 认 `.appxbundle`/`.msixbundle`，解压走 embedded-zip
+   - IExpress（SFX-CAB）：detect 靠 PE 头 256KB 内 "IExpress" 标记；Windows 用 `expand -r`，非 Windows 回退 `cabextract`
+   - ISO/UDF：纯内嵌（`iso9660` + `hadris-udf` crate），递归遍历 + `sanitize_disc_name` 清洗 ";1" 后缀与非法字符；UDF 失败回退 ISO 层（桥接镜像）
+   - WIM/.msu：`wimextract`（wimlib）回退 external-7z；.msu 直接 external-7z
+   - 分卷：`.7z.001`/`.part1.rar` 走首片解压；`.z01..zNN+.zip` 合并为临时 zip 再解（merge-zip）
+   - xz/bz2/zst：`xz2`/`bzip2`/`zstd` 单文件流式解压 + 与 tar 组合（tar.xz/tar.bz2/tar.zst）
+   - 端到端验证（沙箱实测）：ISO（pycdlib 造镜像）embedded-iso ✓；UDF（pycdlib 2.60）embedded-udf ✓；ZIP 分卷 merge-zip ✓；分卷 7z external-7z ✓；IExpress（cabarchive 造样本）cabextract ✓；WIM（wimlib-imagex 造样本）external-7z ✓；tar.xz/tar.bz2/tar.zst ✓
+   - cargo test 12 过、clippy 0 警告
 
 ## 待办
 

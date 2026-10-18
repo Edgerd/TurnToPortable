@@ -15,11 +15,13 @@ use std::path::Path;
 pub enum InstallerKind {
     Msi,
     Msix,
+    MsixBundle,
     Appx,
     InnoSetup,
     Nsis,
     WiXBurn,
     InstallShield,
+    IExpress,
     Squirrel,
     Sfx7z,
     SfxRar,
@@ -28,8 +30,21 @@ pub enum InstallerKind {
     Rar,
     Tar,
     TarGz,
+    TarXz,
+    TarBz2,
+    TarZst,
     Gz,
+    Xz,
+    Bz2,
+    Zst,
     Cab,
+    Iso,
+    Udf,
+    Wim,
+    Msu,
+    Split7z,
+    SplitRar,
+    SplitZip,
     Standalone,
     Unknown,
 }
@@ -43,10 +58,24 @@ impl InstallerKind {
                 | Self::Rar
                 | Self::Tar
                 | Self::TarGz
+                | Self::TarXz
+                | Self::TarBz2
+                | Self::TarZst
                 | Self::Gz
+                | Self::Xz
+                | Self::Bz2
+                | Self::Zst
                 | Self::Cab
                 | Self::Msix
+                | Self::MsixBundle
                 | Self::Appx
+                | Self::Iso
+                | Self::Udf
+                | Self::Wim
+                | Self::Msu
+                | Self::Split7z
+                | Self::SplitRar
+                | Self::SplitZip
         )
     }
 
@@ -60,8 +89,21 @@ impl InstallerKind {
                 | Self::Rar
                 | Self::Tar
                 | Self::TarGz
+                | Self::TarXz
+                | Self::TarBz2
+                | Self::TarZst
                 | Self::Gz
+                | Self::Xz
+                | Self::Bz2
+                | Self::Zst
                 | Self::Cab
+                | Self::Iso
+                | Self::Udf
+                | Self::Wim
+                | Self::Msu
+                | Self::Split7z
+                | Self::SplitRar
+                | Self::SplitZip
         )
     }
 
@@ -69,11 +111,13 @@ impl InstallerKind {
         match self {
             Self::Msi => "Windows Installer (MSI)",
             Self::Msix => "MSIX Package",
+            Self::MsixBundle => "MSIX Bundle",
             Self::Appx => "AppX Package",
             Self::InnoSetup => "Inno Setup",
             Self::Nsis => "NSIS",
             Self::WiXBurn => "WiX Burn Bundle",
             Self::InstallShield => "InstallShield",
+            Self::IExpress => "IExpress (SFX-CAB)",
             Self::Squirrel => "Squirrel Installer",
             Self::Sfx7z => "7-Zip SFX",
             Self::SfxRar => "RAR SFX",
@@ -82,8 +126,21 @@ impl InstallerKind {
             Self::Rar => "RAR Archive",
             Self::Tar => "TAR Archive",
             Self::TarGz => "Tar+Gzip Archive",
+            Self::TarXz => "Tar+XZ Archive",
+            Self::TarBz2 => "Tar+BZip2 Archive",
+            Self::TarZst => "Tar+Zstd Archive",
             Self::Gz => "GZIP File",
+            Self::Xz => "XZ File",
+            Self::Bz2 => "BZip2 File",
+            Self::Zst => "Zstd File",
             Self::Cab => "Cabinet (CAB)",
+            Self::Iso => "ISO 9660 Image",
+            Self::Udf => "UDF Image",
+            Self::Wim => "WIM Image",
+            Self::Msu => "Windows Update Package (MSU)",
+            Self::Split7z => "7-Zip Split Volume",
+            Self::SplitRar => "RAR Split Volume",
+            Self::SplitZip => "ZIP Split Volume",
             Self::Standalone => "Standalone Application",
             Self::Unknown => "Unknown",
         }
@@ -115,6 +172,20 @@ const MAGIC_USTAR: &[u8] = b"ustar";
 pub fn detect(path: &Path) -> crate::Result<Detection> {
     let meta = std::fs::metadata(path)?;
     let len = meta.len();
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // --- 0. 分卷压缩（扩展名特征，优先于魔数 —— 分卷首片没有独立魔数） ---
+    if let Some((kind, why)) = split_volume_kind(&file_name) {
+        return Ok(Detection {
+            kind,
+            note: Some(why.into()),
+            pe: None,
+            sha256: sha256_file_streaming(path)?,
+        });
+    }
 
     // 流式检测：不整读大文件。
     // - 头部 4MB 覆盖：魔数 / PE 头 / NSIS / InstallShield / 7z-SFX stub
@@ -190,10 +261,63 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
             sha256,
         });
     }
+    // XZ / BZip2 / Zstd 家族：同样嗅探内部 tar
+    if head.starts_with(b"\xFD7zXZ\x00") {
+        return Ok(Detection {
+            kind: sniff_xz(path),
+            note: None,
+            pe: None,
+            sha256,
+        });
+    }
+    if head.starts_with(b"BZh") {
+        return Ok(Detection {
+            kind: sniff_bz2(path),
+            note: None,
+            pe: None,
+            sha256,
+        });
+    }
+    if head.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+        return Ok(Detection {
+            kind: sniff_zst(path),
+            note: None,
+            pe: None,
+            sha256,
+        });
+    }
     // Windows CAB（expand.exe 可解）
     if head.starts_with(b"MSCF") {
         return Ok(Detection {
             kind: InstallerKind::Cab,
+            note: None,
+            pe: None,
+            sha256,
+        });
+    }
+    // ISO 9660：PVD 在 0x8001（前 4MB 头部窗口必覆盖）；带 NSR 描述符的为 UDF 桥接
+    if head.len() > 0x8006 && &head[0x8001..0x8006] == b"CD001" {
+        let kind = if find(&head, b"NSR0", 0x8001, head.len().min(0x8001 + 2048 * 16)).is_some() {
+            InstallerKind::Udf
+        } else {
+            InstallerKind::Iso
+        };
+        return Ok(Detection {
+            kind,
+            note: None,
+            pe: None,
+            sha256,
+        });
+    }
+    // WIM / MSU（MSU 实为 WIM 容器）
+    if head.starts_with(b"MSWIM\x00\x00\x00") || head.starts_with(b"WLPWM\x00\x00\x00") {
+        let kind = if file_name.to_ascii_lowercase().ends_with(".msu") {
+            InstallerKind::Msu
+        } else {
+            InstallerKind::Wim
+        };
+        return Ok(Detection {
+            kind,
             note: None,
             pe: None,
             sha256,
@@ -258,6 +382,102 @@ fn sniff_gzip(data: &[u8]) -> InstallerKind {
     }
 }
 
+fn is_tar_head(buf: &[u8], n: usize) -> bool {
+    n > 512 && buf.len() >= 262 && &buf[257..262] == MAGIC_USTAR
+}
+
+/// XZ / BZip2 / Zstd 的 tar 嗅探：流式解开前 1KB 看头部（不解整个文件）
+fn sniff_xz(path: &Path) -> InstallerKind {
+    use std::io::Read;
+    let f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return InstallerKind::Xz,
+    };
+    let mut buf = [0u8; 1024];
+    let n = xz2::read::XzDecoder::new(f)
+        .take(1024)
+        .read(&mut buf)
+        .unwrap_or(0);
+    if is_tar_head(&buf, n) {
+        InstallerKind::TarXz
+    } else {
+        InstallerKind::Xz
+    }
+}
+
+fn sniff_bz2(path: &Path) -> InstallerKind {
+    use std::io::Read;
+    let f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return InstallerKind::Bz2,
+    };
+    let mut buf = [0u8; 1024];
+    let n = bzip2::read::BzDecoder::new(f)
+        .take(1024)
+        .read(&mut buf)
+        .unwrap_or(0);
+    if is_tar_head(&buf, n) {
+        InstallerKind::TarBz2
+    } else {
+        InstallerKind::Bz2
+    }
+}
+
+fn sniff_zst(path: &Path) -> InstallerKind {
+    use std::io::Read;
+    let f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return InstallerKind::Zst,
+    };
+    let mut d = match zstd::Decoder::new(f) {
+        Ok(d) => d,
+        Err(_) => return InstallerKind::Zst,
+    };
+    let mut buf = [0u8; 1024];
+    let n = d.read(&mut buf).unwrap_or(0);
+    if is_tar_head(&buf, n) {
+        InstallerKind::TarZst
+    } else {
+        InstallerKind::Zst
+    }
+}
+
+/// 分卷压缩：纯扩展名判断（分卷首片无独立魔数）。
+/// - `.7z.001` / 任意 `.001` → 7-Zip 分卷（7z 可直接打开首个分卷）
+/// - `.partN.rar` → RAR 分卷（unrar 从 part1 开始解）
+/// - `.zNN` → ZIP 分卷（合并后解压）
+fn split_volume_kind(file_name: &str) -> Option<(InstallerKind, &'static str)> {
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".001") {
+        return Some((
+            InstallerKind::Split7z,
+            "7-Zip 分卷：请把全部分卷放在同一目录（7z 直接解首个分卷）",
+        ));
+    }
+    // part1.rar / part01.rar … part99.rar（.rar 前的最后一段须是 partN）
+    if lower.ends_with(".rar") {
+        let last = lower[..lower.len() - 4].rsplit('.').next().unwrap_or("");
+        if let Some(part) = last.strip_prefix("part") {
+            if (1..=99).any(|i| part == i.to_string() || part == format!("{i:02}")) {
+                return Some((
+                    InstallerKind::SplitRar,
+                    "RAR 分卷：请把全部分卷放在同一目录（从 part1 开始解）",
+                ));
+            }
+        }
+    }
+    // z01..z99（同目录须有同名 .zip 主卷）
+    if let Some(num) = lower.rsplit_once('.').map(|(_, e)| e) {
+        if num.len() == 3 && num.starts_with('z') && num[1..].chars().all(|c| c.is_ascii_digit()) {
+            return Some((
+                InstallerKind::SplitZip,
+                "ZIP 分卷：将合并 .z01~.zNN 与 .zip 主卷后解压（需额外一份临时磁盘空间）",
+            ));
+        }
+    }
+    None
+}
+
 /// ZIP 家族：MSIX / AppX / Squirrel / 普通 ZIP（EOCD 在文件尾，zip crate 自行 seek，不整读）
 fn detect_zip_family(path: &Path, sha256: &str) -> crate::Result<Detection> {
     let d = |kind, note| {
@@ -281,6 +501,9 @@ fn detect_zip_family(path: &Path, sha256: &str) -> crate::Result<Detection> {
                 InstallerKind::Appx
             };
             return d(kind, None);
+        }
+        if has("AppxBundleManifest.xml") {
+            return d(InstallerKind::MsixBundle, None);
         }
         if names.iter().any(|f| f.ends_with(".nupkg"))
             && names.iter().any(|f| f.contains("Squirrel"))
@@ -338,6 +561,11 @@ fn detect_pe_installers(head: &[u8], tail: &[u8], pe_info: &pe::PeInfo) -> Optio
         return Some(InstallerKind::InstallShield);
     }
 
+    // IExpress（Windows 自带 SFX-CAB 打包器，标记在 PE stub 内）
+    if find(head, b"IExpress", 0, head.len().min(256 * 1024)).is_some() {
+        return Some(InstallerKind::IExpress);
+    }
+
     // 7z SFX：魔数紧随 PE stub 之后（真实 SFX 的 stub < 1MB；收窄窗口避免
     // 命中压缩数据/常量表里偶然出现的相同字节，如 pxe 自身内嵌的检测常量）
     if find(head, MAGIC_7Z, 0, head.len().min(1024 * 1024)).is_some() {
@@ -380,5 +608,56 @@ mod tests {
     fn find_works() {
         assert_eq!(find(b"hello world", b"world", 0, 11), Some(6));
         assert_eq!(find(b"hello", b"world", 0, 5), None);
+    }
+
+    #[test]
+    fn split_volume_detection() {
+        assert_eq!(
+            split_volume_kind("setup.7z.001").map(|(k, _)| k),
+            Some(InstallerKind::Split7z)
+        );
+        assert_eq!(
+            split_volume_kind("GAME.part1.rar").map(|(k, _)| k),
+            Some(InstallerKind::SplitRar)
+        );
+        assert_eq!(
+            split_volume_kind("GAME.part01.rar").map(|(k, _)| k),
+            Some(InstallerKind::SplitRar)
+        );
+        assert_eq!(
+            split_volume_kind("data.z01").map(|(k, _)| k),
+            Some(InstallerKind::SplitZip)
+        );
+        // 普通文件不误判
+        assert!(split_volume_kind("installer.exe").is_none());
+        assert!(split_volume_kind("part5.rar").is_some()); // part5 是合法的第 5 分卷
+        assert!(split_volume_kind("photo.rar").is_none());
+        assert!(split_volume_kind("backup.zip").is_none());
+        assert!(split_volume_kind("part.rar").is_none()); // part 后无编号
+    }
+
+    #[test]
+    fn iso_and_wim_detect() {
+        let dir = std::env::temp_dir();
+
+        // ISO：CD001 位于 0x8001 → Iso；带 NSR0 描述符 → Udf
+        let mut iso = vec![0u8; 0x9100];
+        iso[0x8001..0x8006].copy_from_slice(b"CD001");
+        let p = dir.join("pxe_test.iso");
+        std::fs::write(&p, &iso).unwrap();
+        assert_eq!(detect(&p).unwrap().kind, InstallerKind::Iso);
+
+        iso[0x8801..0x8805].copy_from_slice(b"NSR0");
+        let p = dir.join("pxe_test_udf.iso");
+        std::fs::write(&p, &iso).unwrap();
+        assert_eq!(detect(&p).unwrap().kind, InstallerKind::Udf);
+
+        // WIM / MSU
+        let p = dir.join("pxe_test.wim");
+        std::fs::write(&p, b"MSWIM\x00\x00\x00").unwrap();
+        assert_eq!(detect(&p).unwrap().kind, InstallerKind::Wim);
+        let p = dir.join("pxe_test.msu");
+        std::fs::write(&p, b"MSWIM\x00\x00\x00").unwrap();
+        assert_eq!(detect(&p).unwrap().kind, InstallerKind::Msu);
     }
 }

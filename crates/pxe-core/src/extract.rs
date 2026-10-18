@@ -82,6 +82,7 @@ pub fn extract(
             (InstallerKind::Msi, "lessmsi"),
         ],
         InstallerKind::Msix
+        | InstallerKind::MsixBundle
         | InstallerKind::Appx
         | InstallerKind::Zip
         | InstallerKind::Squirrel => &[(InstallerKind::Zip, "embedded-zip")],
@@ -89,8 +90,33 @@ pub fn extract(
         InstallerKind::Rar | InstallerKind::SfxRar => &[(InstallerKind::Rar, "unrar")],
         InstallerKind::Tar => &[(InstallerKind::Tar, "embedded-tar")],
         InstallerKind::TarGz => &[(InstallerKind::TarGz, "embedded-targz")],
+        InstallerKind::TarXz => &[(InstallerKind::TarXz, "embedded-tarxz")],
+        InstallerKind::TarBz2 => &[(InstallerKind::TarBz2, "embedded-tarbz2")],
+        InstallerKind::TarZst => &[(InstallerKind::TarZst, "embedded-tarzst")],
         InstallerKind::Gz => &[(InstallerKind::Gz, "embedded-gzip")],
+        InstallerKind::Xz => &[(InstallerKind::Xz, "embedded-xz")],
+        InstallerKind::Bz2 => &[(InstallerKind::Bz2, "embedded-bz2")],
+        InstallerKind::Zst => &[(InstallerKind::Zst, "embedded-zst")],
         InstallerKind::Cab => &[(InstallerKind::Cab, "expand")],
+        InstallerKind::Iso => &[(InstallerKind::Iso, "embedded-iso")],
+        // UDF 桥接镜像（ISO+UDF 双目录结构）：UDF 层失败时试 ISO 层
+        InstallerKind::Udf => &[
+            (InstallerKind::Udf, "embedded-udf"),
+            (InstallerKind::Iso, "embedded-iso"),
+        ],
+        InstallerKind::Wim => &[
+            (InstallerKind::Wim, "wimextract"),
+            (InstallerKind::Nsis, "external-7z"),
+        ],
+        InstallerKind::Msu => &[(InstallerKind::Nsis, "external-7z")],
+        // 分卷：7z/unrar 直接吃首个分卷；zip 分卷需合并
+        InstallerKind::Split7z => &[(InstallerKind::Nsis, "external-7z")],
+        InstallerKind::SplitRar => &[(InstallerKind::Rar, "unrar")],
+        InstallerKind::SplitZip => &[(InstallerKind::SplitZip, "merge-zip")],
+        InstallerKind::IExpress => &[
+            (InstallerKind::IExpress, "sfx-cab"),
+            (InstallerKind::Sfx7z, "embedded-7z"),
+        ],
         _ => &[
             (InstallerKind::Zip, "embedded-zip"),
             (InstallerKind::Sfx7z, "embedded-7z"),
@@ -111,7 +137,46 @@ pub fn extract(
                 flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?),
                 dest,
             ),
+            InstallerKind::TarXz => {
+                extract_tar(xz2::read::XzDecoder::new(std::fs::File::open(path)?), dest)
+            }
+            InstallerKind::TarBz2 => extract_tar(
+                bzip2::read::BzDecoder::new(std::fs::File::open(path)?),
+                dest,
+            ),
+            InstallerKind::TarZst => {
+                let d = zstd::Decoder::new(std::fs::File::open(path)?)
+                    .map_err(|e| Error::Extraction(format!("zstd: {e}")))?;
+                extract_tar(d, dest)
+            }
             InstallerKind::Gz => extract_gz(path, dest),
+            InstallerKind::Xz => extract_single(
+                path,
+                dest,
+                |r| Ok(Box::new(xz2::read::XzDecoder::new(r)) as Box<dyn std::io::Read>),
+                "xz",
+            ),
+            InstallerKind::Bz2 => extract_single(
+                path,
+                dest,
+                |r| Ok(Box::new(bzip2::read::BzDecoder::new(r)) as Box<dyn std::io::Read>),
+                "bzip2",
+            ),
+            InstallerKind::Zst => extract_single(
+                path,
+                dest,
+                |r| {
+                    let d = zstd::Decoder::new(r)
+                        .map_err(|e| Error::Extraction(format!("zstd: {e}")))?;
+                    Ok(Box::new(d) as Box<dyn std::io::Read>)
+                },
+                "zstd",
+            ),
+            InstallerKind::Iso => extract_iso(path, dest),
+            InstallerKind::Udf => extract_udf(path, dest),
+            InstallerKind::SplitZip => extract_split_zip(path, dest),
+            InstallerKind::IExpress => extract_iexpress(path, dest, opts),
+            InstallerKind::Wim => extract_wimextract(path, dest, opts),
             InstallerKind::Cab => extract_external(
                 "expand",
                 &[
@@ -440,6 +505,151 @@ fn extract_gz(path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 单文件压缩档（xz/bz2/zst）：流式解压为 dest/去后缀文件（不整读进内存）。
+fn extract_single(
+    path: &Path,
+    dest: &Path,
+    decoder: impl FnOnce(std::fs::File) -> Result<Box<dyn std::io::Read>>,
+    label: &str,
+) -> Result<()> {
+    let out_name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "payload".into());
+    let f = std::fs::File::open(path)?;
+    let mut d = decoder(f)?;
+    let mut out = std::fs::File::create(dest.join(&out_name))?;
+    std::io::copy(&mut d, &mut out).map_err(|e| Error::Extraction(format!("{label}: {e}")))?;
+    Ok(())
+}
+
+// ---------- 光盘镜像（ISO / UDF，纯内嵌） ----------
+
+/// ISO/UDF 文件名清洗：去掉 ISO9660 的 ";1" 版本后缀，替换 Windows 非法字符
+fn sanitize_disc_name(name: &str) -> String {
+    let base = name.split(';').next().unwrap_or(name).trim_end_matches('.');
+    let cleaned: String = base
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c => c,
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "_".into()
+    } else {
+        cleaned
+    }
+}
+
+fn extract_iso(path: &Path, dest: &Path) -> Result<()> {
+    let f = std::fs::File::open(path)?;
+    let vol = iso9660::ISO9660::new(f).map_err(|e| Error::Extraction(format!("iso9660: {e}")))?;
+    iso_walk(&vol.root, dest).map_err(|e| Error::Extraction(format!("iso9660: {e}")))?;
+    Ok(())
+}
+
+fn iso_walk(dir: &iso9660::ISODirectory<std::fs::File>, out: &Path) -> std::io::Result<()> {
+    for entry in dir.contents() {
+        let entry = entry.map_err(std::io::Error::other)?;
+        let name = sanitize_disc_name(entry.identifier());
+        // 跳过 . / .. 自引用条目
+        if name == "_" && entry.identifier().is_empty() {
+            continue;
+        }
+        if entry.identifier() == "." || entry.identifier() == ".." {
+            continue;
+        }
+        match entry {
+            iso9660::DirectoryEntry::Directory(d) => {
+                let sub = out.join(&name);
+                std::fs::create_dir_all(&sub)?;
+                iso_walk(&d, &sub)?;
+            }
+            iso9660::DirectoryEntry::File(f) => {
+                let mut reader = f.read();
+                let mut out_f = std::fs::File::create(out.join(&name))?;
+                std::io::copy(&mut reader, &mut out_f)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn extract_udf(path: &Path, dest: &Path) -> Result<()> {
+    let f = std::fs::File::open(path)?;
+    let vol = hadris_udf::UdfVolume::open(std::io::BufReader::new(f))
+        .map_err(|e| Error::Extraction(format!("udf: {e}")))?;
+    let root = vol
+        .root_dir()
+        .map_err(|e| Error::Extraction(format!("udf: {e}")))?;
+    udf_walk(&vol, &root, dest).map_err(|e| Error::Extraction(format!("udf: {e}")))?;
+    Ok(())
+}
+
+fn udf_walk(
+    vol: &hadris_udf::UdfVolume<std::io::BufReader<std::fs::File>>,
+    dir: &hadris_udf::UdfDir,
+    out: &Path,
+) -> std::io::Result<()> {
+    for e in dir.entries() {
+        let name = sanitize_disc_name(e.name());
+        if name == "." || name == ".." {
+            continue;
+        }
+        if e.is_directory {
+            let sub = out.join(&name);
+            std::fs::create_dir_all(&sub)?;
+            let sub_dir = vol.read_directory(&e.icb).map_err(std::io::Error::other)?;
+            udf_walk(vol, &sub_dir, &sub)?;
+        } else {
+            let data = vol.read_file(e).map_err(std::io::Error::other)?;
+            std::fs::write(out.join(&name), &data)?;
+        }
+    }
+    Ok(())
+}
+
+/// ZIP 分卷：合并 .z01..zNN + 主卷 .zip 为临时 zip 再解压（ZIP 分卷是纯字节切分）
+fn extract_split_zip(path: &Path, dest: &Path) -> Result<()> {
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .ok_or_else(|| Error::Extraction("bad split name".into()))?;
+    let lower = name.to_ascii_lowercase();
+    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    if !ext.starts_with('z') || ext.len() != 3 {
+        return Err(Error::Extraction("ZIP 分卷请选择 .z01 首卷".into()));
+    }
+    let base = name[..name.len() - 4].to_string(); // 去掉 .zNN
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let main = dir.join(format!("{base}.zip"));
+    if !main.exists() {
+        return Err(Error::Extraction(format!(
+            "缺少 ZIP 主卷 {}",
+            main.display()
+        )));
+    }
+    let mut volumes: Vec<std::fs::File> = Vec::new();
+    for i in 1..=99u32 {
+        let p = dir.join(format!("{base}.z{i:02}"));
+        if p.exists() {
+            volumes.push(std::fs::File::open(&p)?);
+        }
+    }
+    let merged = dest.join(".__pxe_merged.zip");
+    {
+        let mut out = std::io::BufWriter::new(std::fs::File::create(&merged)?);
+        for v in &mut volumes {
+            std::io::copy(v, &mut out)?;
+        }
+        std::io::copy(&mut std::fs::File::open(&main)?, &mut out)?;
+    }
+    let r = extract_zip(&merged, dest);
+    let _ = std::fs::remove_file(&merged);
+    r
+}
+
 // ---------- 外部工具回退 ----------
 
 #[cfg(windows)]
@@ -590,6 +800,46 @@ fn extract_lessmsi(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()
             "x".into(),
             path.display().to_string(),
             dest.display().to_string(),
+        ],
+        opts,
+    )
+}
+
+/// IExpress（Windows 自带 SFX-CAB）：CAB 贴在 PE stub 之后，expand 可直接抽取；
+/// 非 Windows 用 cabextract。失败后回退链会继续试 embedded-7z。
+fn extract_iexpress(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
+    if cfg!(windows) {
+        extract_external(
+            "expand",
+            &[
+                "-r".into(),
+                path.display().to_string(),
+                "-F:*".into(),
+                dest.display().to_string(),
+            ],
+            opts,
+        )
+    } else {
+        extract_external(
+            "cabextract",
+            &[
+                "-d".into(),
+                dest.display().to_string(),
+                path.display().to_string(),
+            ],
+            opts,
+        )
+    }
+}
+
+/// wimlib 解 WIM（非 Windows 也可用）。失败后回退 external-7z。
+fn extract_wimextract(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
+    extract_external(
+        "wimextract",
+        &[
+            path.display().to_string(),
+            "all".into(),
+            format!("--dest={}", dest.display()),
         ],
         opts,
     )
