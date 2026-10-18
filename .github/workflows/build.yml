@@ -68,9 +68,10 @@ jobs:
           $v = "26.04"
           Invoke-WebRequest -Uri "https://github.com/myfreeer/7z-build-nsis/releases/download/$v/7z$($v.Replace('.','')).7z" -OutFile "7zdist.7z"
           & "C:\Program Files\7-Zip\7z.exe" x -y -o"7zdist" "7zdist.7z" | Out-Null
-          Copy-Item "7zdist\7z.exe" $out\
-          Copy-Item "7zdist\7z.dll" $out\
-          Copy-Item "7zdist\License.txt" $out\7-zip-license.txt
+          # 发行包内结构：7zdist\7-zip-x64\{7z.exe,7z.dll,License.txt}
+          Copy-Item "7zdist\7-zip-x64\7z.exe" $out\
+          Copy-Item "7zdist\7-zip-x64\7z.dll" $out\
+          Copy-Item "7zdist\7-zip-x64\License.txt" $out\7-zip-license.txt
           Compress-Archive -Path "$out\*" -DestinationPath "$env:ARTIFACT"
 
       - uses: actions/upload-artifact@v4
