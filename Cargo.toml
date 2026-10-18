@@ -8,14 +8,14 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
 goblin = "0.9"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-sevenz-rust = "0.6"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+sevenz-rust2 = "0.24"
 sha2 = "0.10"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

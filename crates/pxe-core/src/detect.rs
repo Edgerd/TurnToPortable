@@ -490,7 +490,11 @@ fn detect_zip_family(path: &Path, sha256: &str) -> crate::Result<Detection> {
     };
     if let Ok(mut z) = zip::ZipArchive::new(std::fs::File::open(path)?) {
         let names: Vec<String> = (0..z.len())
-            .filter_map(|i| z.by_index_raw(i).ok().map(|f| f.name().to_string()))
+            .filter_map(|i| {
+                z.by_index_raw(i)
+                    .ok()
+                    .and_then(|f| f.name().ok().map(|n| n.into_owned()))
+            })
             .collect();
 
         let has = |n: &str| names.iter().any(|f| f.eq_ignore_ascii_case(n));

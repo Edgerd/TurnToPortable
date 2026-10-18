@@ -68,7 +68,11 @@ fn build_standalone_zip_end_to_end() {
     let f = std::fs::File::open(r.packed.unwrap()).unwrap();
     let mut z = zip::ZipArchive::new(f).unwrap();
     let names: Vec<String> = (0..z.len())
-        .filter_map(|i| z.by_index_raw(i).ok().map(|e| e.name().to_string()))
+        .filter_map(|i| {
+            z.by_index_raw(i)
+                .ok()
+                .and_then(|e| e.name().ok().map(|n| n.into_owned()))
+        })
         .collect();
     assert!(
         names.iter().any(|n| n == "App/MyTool.exe"),

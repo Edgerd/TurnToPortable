@@ -200,7 +200,8 @@ pub fn pack(root: &Path, kind: PackKind, level: u8) -> Result<Option<PathBuf>> {
         }
         PackKind::SevenZip => {
             let dest = PathBuf::from(format!("{}.7z", root.display()));
-            sevenz_rust::compress_to_path(root, &dest).map_err(|e| Error::SevenZ(e.to_string()))?;
+            sevenz_rust2::compress_to_path(root, &dest)
+                .map_err(|e| Error::SevenZ(e.to_string()))?;
             Ok(Some(dest))
         }
     }

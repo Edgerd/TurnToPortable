@@ -10,7 +10,7 @@
 
 ## 特性
 
-- **智能识别**：NSIS / Inno Setup / InstallShield / MSIX / MSI / Squirrel / 7z-SFX / zip / 7z / tar.gz，流式检测 SHA256（4MB 峰值内存即可处理任意大文件）
+- **智能识别**：NSIS / Inno Setup / InstallShield / MSIX（含 .appxbundle）/ MSI / IExpress / Squirrel / 7z-SFX / zip（含分卷）/ 7z（含分卷）/ RAR（含分卷）/ tar / tar.gz / tar.xz / tar.bz2 / tar.zst / xz / bz2 / zst / CAB / ISO / UDF / WIM / MSU，流式检测 SHA256（4MB 峰值内存即可处理任意大文件）
 - **深度解包**：electron-builder 一类的"套壳"安装器自动逐层解开（最多 8 层，每层最多尝试 5 个候选压缩档），**解出主程序即停**
 - **原生启动器**：生成的便携包附带 `pxe-stub.exe` 原生启动器（无黑窗、带图标），APPDATA/TEMP 等环境变量重定向到 `Data/`，并回退生成 bat/ps1
 - **标准便携结构**：`App / Data / Documentation / Plugins / Redist`
@@ -51,18 +51,36 @@
 
 运行 `pxe-gui.exe`：选择安装包 → 填应用名 → 选打包形态 → 构建，进度实时显示。
 
+### 两个前端，如何选择？
+
+| 前端 | 定位 | 适合 |
+|---|---|---|
+| `app/`（Flutter, Material 3） | **主前端**：新功能与 UI 打磨均在此进行 | 日常使用、跨平台 |
+| `pxe-gui`（egui, Fluent 2） | 轻量桌面备用前端：即时模式、编译快、无 Flutter 工具链依赖 | 快速原型、最小依赖环境 |
+
+两者共用 `pxe-core::pipeline`，功能完全一致；贡献 UI 改动请优先落在 `app/`，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 已知限制
+
+- 深度解包最多 **8 层**、每层最多尝试 **5 个**候选压缩档（防止压缩包套压缩包失控）
+- Inno Setup 6.4+ 依赖可选的 `innounp`（innoextract 1.9 不支持）
+- WIM/.msu 依赖 `wimextract`（wimlib）或随包 7z
+- 非标准魔数的私人 SFX 可能落入 7z 通用解包，主程序定位按大小启发式
+
 ## 外部工具（全部可选回退）
 
 内嵌解压器（zip/7z/tar.gz）无任何依赖。以下外部工具仅在对应内嵌方案失败时启用，放到 pxe.exe 同目录即可：
 
 | 工具 | 用途 |
 |---|---|
-| `7z.exe` + `7z.dll` | NSIS 等格式的回退解包（发布包已附带 NSIS 增强版构建） |
+| `7z.exe` + `7z.dll` | NSIS/WIM/.msu 等格式的回退解包（发布包已附带 NSIS 增强版构建，LGPL + unRAR 许可再分发） |
 | `innoextract` | Inno Setup 优先解包器（≤6.3） |
 | `innounp` | Inno Setup 6.4+ 新版安装包 |
 | `ISx` | InstallShield（DevStudio 9 ~ IS 2021） |
 | `lessmsi` | MSI 回退（msiexec 失败/无权限/非 Windows） |
-| `unrar` | RAR 压缩包 |
+| `unrar` | RAR 压缩包（含 .partN.rar 分卷） |
+| `cabextract` | IExpress SFX-CAB（非 Windows） |
+| `wimextract` | WIM 镜像（wimlib，可选） |
 
 ## 构建产物示例
 
@@ -83,9 +101,13 @@ Qoder_Portable/
 ## 从源码构建
 
 ```bash
-cargo build --release --target x86_64-pc-windows-gnu   # Windows 产物
-cargo test -p pxe-core                                 # 测试
+cargo build --release        # CI 与发布产物均为 windows-latest 原生 MSVC 工具链
+cargo test --workspace       # 测试（含 property tests）
+cargo bench -p pxe-core      # 检测路径基准（criterion）
+flutter analyze && flutter build windows --release   # app/ 主前端
 ```
+
+> 如需 GNU 交叉编译（如从 Linux 产 Windows exe）：`cargo build --release --target x86_64-pc-windows-gnu`。发布以 MSVC 构建为准。
 
 工作区结构：
 

@@ -1,5 +1,34 @@
 # 更新日志
 
+## v0.3.0 (2026-10-18)
+
+### 新增
+
+- **格式支持大扩展**（全部内嵌优先，外部工具仅可选回退）：
+  - MSIX/APPX bundle（`.appxbundle`/`.msixbundle`，走 embedded-zip）
+  - IExpress SFX-CAB（PE 头标记检测；Windows `expand` / 其他平台 `cabextract`）
+  - ISO 9660 / UDF 光盘镜像（`iso9660` + `hadris-udf` 纯内嵌，";1" 后缀与非法字符自动清洗；UDF 失败回退 ISO 层）
+  - WIM / .msu（`wimextract` 回退随包 7z）
+  - 分卷压缩：`.7z.001` / `.partN.rar`（首片直解）、`.z01..zNN+.zip`（合并后解压）
+  - xz / bz2 / zst 单文件流式解压及 tar.xz / tar.bz2 / tar.zst 组合（`xz2` / `bzip2` / `zstd`）
+- **pxe-stub**：等待主程序退出并转发退出码；launch.log 改 UTC ISO8601 可读时间戳，超过 1MB 自动轮转 `.old`
+- **工程化**：CI 增加 cargo-audit 安全审计；启用 Dependabot（cargo / pub / github-actions）；artifact 与 Release 文件名带版本号
+- `ARCHITECTURE.md`（管线与契约）、`CONTRIBUTING.md`（贡献与发布流程）；README 增加双前端定位说明与已知限制
+- property tests（proptest：畸形输入不得 panic）与 criterion 检测基准（`cargo bench -p pxe-core`）
+
+### 修复
+
+- IExpress 回退链标签（"expand" → 平台无关 "sfx-cab"，实际工具 Windows=expand / 其他=cabextract）
+- **安全升级**（cargo-audit 发现 4 个漏洞全部清零）：
+  - `zip` 2.4.2 → 9.0.5：修复符号链接逃逸、SUID/SGID 位保留、Unix 权限越界三个高危/严重漏洞（RUSTSEC-2026-0367/0368/0369）
+  - `sevenz-rust` 0.6（停止维护 + 路径穿越 RUSTSEC-2026-0245）→ 维护中的 fork `sevenz-rust2` 0.24
+
+### 测试与验证
+
+- 单元 / e2e / property 测试全部通过；clippy 0 警告；fmt 通过
+- 端到端实测：ISO（embedded-iso）、UDF（embedded-udf）、ZIP 分卷（merge-zip）、7z 分卷（external-7z）、IExpress（cabextract）、WIM（external-7z）、tar.xz / tar.bz2 / tar.zst
+- CI 随包 7-Zip 换为 myfreeer/7z-build-nsis v26.04（NSIS 支持更广，LGPL + unRAR 许可合规再分发）
+
 ## v0.2.0 (2026-10-17)
 
 ### 新增

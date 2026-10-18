@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 goblin = { workspace = true }
 zip = { workspace = true }
-sevenz-rust = { workspace = true }
+sevenz-rust2 = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
@@ -22,3 +22,11 @@ bzip2 = "0.5"
 zstd = "0.13"
 iso9660 = "0.1"
 hadris-udf = "2.5"
+
+[dev-dependencies]
+proptest = "1"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "detect_bench"
+harness = false

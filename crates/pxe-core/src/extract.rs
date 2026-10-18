@@ -222,7 +222,7 @@ pub fn extract(
                         if let Some(inner) = find_pluginsdir_7z(dest) {
                             let tmp = dest.join(".__pxe_inner");
                             let _ = std::fs::remove_dir_all(&tmp);
-                            if sevenz_rust::decompress_file(&inner, &tmp).is_ok() && validate(&tmp)
+                            if sevenz_rust2::decompress_file(&inner, &tmp).is_ok() && validate(&tmp)
                             {
                                 // 清空 dest（保留 tmp），再把内层内容移进来
                                 for e in std::fs::read_dir(dest)?.flatten() {
@@ -333,7 +333,7 @@ fn deep_unpack(dest: &Path, opts: &ExtractOptions) {
                 Some((sz, p))
             })
             .collect();
-        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.0));
         candidates.truncate(DEEP_MAX_CANDIDATES);
 
         // 已解出主程序 → 到此为止。判定：存在 $PLUGINSDIR 之外的 exe，
@@ -436,7 +436,7 @@ fn extract_zip(path: &Path, dest: &Path) -> Result<()> {
 }
 
 fn extract_7z_embedded(path: &Path, dest: &Path) -> Result<()> {
-    sevenz_rust::decompress_file(path, dest).map_err(|e| Error::SevenZ(e.to_string()))
+    sevenz_rust2::decompress_file(path, dest).map_err(|e| Error::SevenZ(e.to_string()))
 }
 
 /// 用外部 7-Zip 解（NSIS 外壳只有完整版 7z 支持；7z.exe/7z.dll 需在本程序目录或 PATH）

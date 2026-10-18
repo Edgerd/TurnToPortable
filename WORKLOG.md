@@ -29,10 +29,21 @@
    - xz/bz2/zst：`xz2`/`bzip2`/`zstd` 单文件流式解压 + 与 tar 组合（tar.xz/tar.bz2/tar.zst）
    - 端到端验证（沙箱实测）：ISO（pycdlib 造镜像）embedded-iso ✓；UDF（pycdlib 2.60）embedded-udf ✓；ZIP 分卷 merge-zip ✓；分卷 7z external-7z ✓；IExpress（cabarchive 造样本）cabextract ✓；WIM（wimlib-imagex 造样本）external-7z ✓；tar.xz/tar.bz2/tar.zst ✓
    - cargo test 12 过、clippy 0 警告
+11. 外部评审遗留项一次性补齐（v0.3.0）：
+   - pxe-stub：spawn 改为 wait + 退出码转发；append_log 改 UTC ISO8601（自带 civil_from_days 实现，零依赖）+ >1MB 轮转 launch.log.old；错误路径也 exit(1)
+   - CI：加 rustsec/audit-check 安全审计；artifact/Release 文件名带版本（PortableXE-<ref>-windows.zip）
+   - `.github/dependabot.yml`：cargo / pub / github-actions 三生态 weekly
+   - `ARCHITECTURE.md`（管线图 + 契约表）、`CONTRIBUTING.md`（门禁/约定/发布流程）
+   - README：双前端定位表（app/ Flutter 主前端，pxe-gui 备用）、已知限制、外部工具表补 cabextract/wimextract、构建说明改 MSVC 为主
+   - property tests（proptest：detect 对畸形输入不 panic，256 cases）+ criterion 检测基准（`cargo bench -p pxe-core`）
+   - **安全升级**：cargo-audit 查出 4 个漏洞全清——zip 2.4.2→9.0.5（RUSTSEC-2026-0367/0368/0369，符号链接逃逸/权限越界）；sevenz-rust 0.6（停维护+路径穿越 RUSTSEC-2026-0245）→ sevenz-rust2 0.24。适配 zip 9 API（name() 返回 Result<Cow>）与新 clippy（sort_by_key）
+   - rustc 工具链默认切到 stable 1.96（sevenz-rust2 0.24 要求 ≥1.93）
+   - 端到端复验：embedded-7z（sevenz-rust2 解）/ embedded-zip（zip 9 解）/ 7z 打包（compress_to_path 写→解全链路）均通过；cargo test 16 过、clippy 0、fmt 过、cargo audit 无漏洞（剩 5 个 egui 传递依赖 unmaintained 警告，不影响门禁）
+   - 版本 0.2.0 → 0.3.0，CHANGELOG 补 v0.3.0 条目
 
 ## 待办
 
-- [x] Rust 验证：clippy 0 警告、测试全过、fmt 通过
+- [x] Rust 验证：clippy 0 警告、测试全过、fmt 通过、cargo audit 无漏洞
 - [ ] 验证：`app/` 内 `flutter pub get && flutter analyze`（沙箱无 Flutter，CI 会跑）
-- [ ] 用户确认后提交并推送；推送后删除本文件
-- [ ] 决策项：双 GUI（crates/pxe-gui egui 版 vs app/ Flutter 版）取舍——询问两次超时，本轮保留两者，未删
+- [x] 决策项：双 GUI 取舍——保留两者并在 README 声明主次（app/ 为主）
+- [ ] 提交推送 + 打 tag v0.3.0 → CI 自动发 Release

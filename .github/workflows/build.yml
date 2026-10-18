@@ -10,12 +10,20 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      # artifact / zip 文件名带版本：tag 构建时为 v* 版本号，分支构建为分支名
+      ARTIFACT: PortableXE-${{ github.ref_name }}-windows.zip
     steps:
       - uses: actions/checkout@v4
 
       - name: Format check
         shell: pwsh
         run: cargo fmt --all --check
+
+      - name: Security audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Clippy
         shell: pwsh
@@ -58,15 +66,15 @@ jobs:
           Copy-Item "7zdist\7z.exe" $out\
           Copy-Item "7zdist\7z.dll" $out\
           Copy-Item "7zdist\License.txt" $out\7-zip-license.txt
-          Compress-Archive -Path "$out\*" -DestinationPath PortableXE-windows.zip
+          Compress-Archive -Path "$out\*" -DestinationPath "$env:ARTIFACT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PortableXE-windows
-          path: PortableXE-windows.zip
+          name: ${{ env.ARTIFACT }}
+          path: ${{ env.ARTIFACT }}
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: PortableXE-windows.zip
+          files: ${{ env.ARTIFACT }}
