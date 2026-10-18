@@ -53,7 +53,11 @@ pub fn create_structure(output_dir: &Path, app_name: &str) -> Result<PathBuf> {
 pub fn fill_app_dir(source: &Path, root: &Path, _is_standalone: bool) -> Result<()> {
     let app = root.join("App");
     if !source.is_dir() {
-        let dest = app.join(source.file_name().ok_or_else(|| Error::InvalidPackage("no file name".into()))?);
+        let dest = app.join(
+            source
+                .file_name()
+                .ok_or_else(|| Error::InvalidPackage("no file name".into()))?,
+        );
         std::fs::copy(source, &dest)?;
         return Ok(());
     }
@@ -103,9 +107,15 @@ pub fn write_launchers(root: &Path, app_name: &str, cfg: &Config) -> Result<Opti
 }
 
 fn write_script_fallbacks(root: &Path, app_name: &str, exe_rel: &str) {
-    let _ = std::fs::write(root.join(format!("{app_name}.bat")), launcher::main_bat(app_name, exe_rel));
+    let _ = std::fs::write(
+        root.join(format!("{app_name}.bat")),
+        launcher::main_bat(app_name, exe_rel),
+    );
     let _ = std::fs::write(root.join("RUN.bat"), launcher::run_bat(app_name));
-    let _ = std::fs::write(root.join(format!("{app_name}.ps1")), launcher::ps1(app_name, exe_rel));
+    let _ = std::fs::write(
+        root.join(format!("{app_name}.ps1")),
+        launcher::ps1(app_name, exe_rel),
+    );
 }
 
 fn find_stub() -> Option<PathBuf> {
@@ -116,7 +126,11 @@ fn find_stub() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let name = if cfg!(windows) { "pxe-stub.exe" } else { "pxe-stub" };
+    let name = if cfg!(windows) {
+        "pxe-stub.exe"
+    } else {
+        "pxe-stub"
+    };
     // 2) 与 pxe 可执行文件同目录（发布形态）
     if let Ok(exe) = std::env::current_exe() {
         let cand = exe.parent()?.join(name);
@@ -135,7 +149,12 @@ fn find_stub() -> Option<PathBuf> {
 }
 
 /// 把官方 vc_redist 安装器放进 Redist/（用户提供路径时），否则只写 README 说明。
-pub fn write_redist(root: &Path, app_name: &str, _cfg: &Config, redist: Option<&Path>) -> Result<()> {
+pub fn write_redist(
+    root: &Path,
+    app_name: &str,
+    _cfg: &Config,
+    redist: Option<&Path>,
+) -> Result<()> {
     let dir = root.join("Redist");
     std::fs::write(
         dir.join("README.md"),
@@ -147,7 +166,9 @@ pub fn write_redist(root: &Path, app_name: &str, _cfg: &Config, redist: Option<&
         ),
     )?;
     if let Some(src) = redist {
-        let file_name = src.file_name().ok_or_else(|| Error::InvalidPackage("bad redist path".into()))?;
+        let file_name = src
+            .file_name()
+            .ok_or_else(|| Error::InvalidPackage("bad redist path".into()))?;
         std::fs::copy(src, dir.join(file_name))?;
     }
     Ok(())
@@ -193,7 +214,11 @@ fn add_dir_to_zip(
 ) -> Result<()> {
     for e in std::fs::read_dir(dir)?.flatten() {
         let p = e.path();
-        let rel = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+        let rel = p
+            .strip_prefix(base)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .replace('\\', "/");
         if p.is_dir() {
             z.add_directory(&rel, opts)?;
             add_dir_to_zip(&p, base, z, opts)?;
@@ -239,5 +264,9 @@ pub fn build(
     }
     write_metadata(&root, app_name, extracted_via)?;
     let packed = pack(&root, pack_kind, cfg.compression_level)?;
-    Ok(BuildOutcome { portable_dir: root, main_exe, packed })
+    Ok(BuildOutcome {
+        portable_dir: root,
+        main_exe,
+        packed,
+    })
 }

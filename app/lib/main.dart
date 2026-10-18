@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,10 +41,20 @@ class Settings {
   /// 输出目录已存在同名应用时直接覆盖（关闭则报错提示改名）
   static bool overwrite = true;
 
-  static File get _file => File(
-      '${Platform.environment['APPDATA'] ?? Platform.environment['HOME'] ?? '.'}/PortableXE/settings.json');
+  /// 设置文件所在目录（按平台取应用支持目录，跨平台正确）
+  static Directory? _dir;
+
+  static Future<void> _ensureDir() async {
+    _dir ??= await getApplicationSupportDirectory();
+  }
+
+  static File get _file {
+    final base = _dir?.path ?? '.';
+    return File('$base/PortableXE/settings.json');
+  }
 
   static Future<void> load() async {
+    await _ensureDir();
     try {
       final m = jsonDecode(await _file.readAsString()) as Map<String, dynamic>;
       compression = ((m['compression'] as num?) ?? 6).clamp(1, 9).toInt();
@@ -53,12 +64,16 @@ class Settings {
       openWhenDone = m['openWhenDone'] ?? false;
       runWhenDone = m['runWhenDone'] ?? false;
       overwrite = m['overwrite'] ?? true;
-    } catch (_) {}
+    } on FileSystemException catch (e) {
+      debugPrint('settings load failed (using defaults): $e');
+    } on FormatException catch (e) {
+      debugPrint('settings file corrupted (using defaults): $e');
+    }
   }
 
   static Future<void> save() async {
+    await _ensureDir();
     try {
-      await _file.parent.create(recursive: true);
       await _file.writeAsString(jsonEncode({
         'compression': compression,
         'timeoutMin': timeoutMin,
@@ -68,7 +83,9 @@ class Settings {
         'runWhenDone': runWhenDone,
         'overwrite': overwrite,
       }));
-    } catch (_) {}
+    } on FileSystemException catch (e) {
+      debugPrint('settings save failed: $e');
+    }
   }
 
   /// 生成 pxe-cli 的 toml 配置 —— 设置项的实际消费者

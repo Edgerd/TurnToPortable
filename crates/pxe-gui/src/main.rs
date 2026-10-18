@@ -31,7 +31,6 @@ struct App {
 }
 
 enum Msg {
-    Log(String),
     Progress(f32, String),
     Done(Result<builder::BuildOutcome, String>),
 }
@@ -48,7 +47,6 @@ impl App {
         if let Some(rx) = &self.rx {
             while let Ok(m) = rx.try_recv() {
                 match m {
-                    Msg::Log(s) => self.log.push(s),
                     Msg::Progress(p, s) => {
                         self.progress = p;
                         self.status = s;
@@ -57,7 +55,8 @@ impl App {
                         self.busy = false;
                         match r {
                             Ok(o) => {
-                                self.log.push(format!("✔ 已创建：{}", o.portable_dir.display()));
+                                self.log
+                                    .push(format!("✔ 已创建：{}", o.portable_dir.display()));
                                 if let Some(p) = &o.packed {
                                     self.log.push(format!("✔ 已打包：{}", p.display()));
                                 }
@@ -86,9 +85,7 @@ impl App {
                         );
                         ctx.load_texture("pxe_logo", tex, egui::TextureOptions::default())
                     });
-                    ui.add(
-                        egui::Image::new(&*logo).fit_to_exact_size(egui::vec2(40.0, 40.0)),
-                    );
+                    ui.add(egui::Image::new(&*logo).fit_to_exact_size(egui::vec2(40.0, 40.0)));
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("PortableXE").size(26.0).strong());
                         fluent::subtle(ui, "把 Windows 安装包变成便携应用 — Rust 版");
@@ -97,36 +94,50 @@ impl App {
                 ui.add_space(16.0);
 
                 // 输入区
-                egui::Grid::new("inputs").num_columns(3).spacing([12.0, 10.0]).show(ui, |ui| {
-                    let w = 400.0;
-                    ui.label("安装包文件");
-                    ui.add(egui::TextEdit::singleline(&mut self.input_file).desired_width(w).hint_text("选择 .exe / .msi / 压缩包…"));
-                    if ui.button("浏览…").clicked() {
-                        if let Some(f) = rfd::FileDialog::new()
-                            .add_filter("可执行与安装包", &["exe", "msi", "msix", "appx", "7z", "zip", "rar"])
-                            .pick_file()
-                        {
-                            self.input_file = f.display().to_string();
-                            if self.app_name.is_empty() {
-                                self.app_name = derive_name(&f);
+                egui::Grid::new("inputs")
+                    .num_columns(3)
+                    .spacing([12.0, 10.0])
+                    .show(ui, |ui| {
+                        let w = 400.0;
+                        ui.label("安装包文件");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.input_file)
+                                .desired_width(w)
+                                .hint_text("选择 .exe / .msi / 压缩包…"),
+                        );
+                        if ui.button("浏览…").clicked() {
+                            if let Some(f) = rfd::FileDialog::new()
+                                .add_filter(
+                                    "可执行与安装包",
+                                    &["exe", "msi", "msix", "appx", "7z", "zip", "rar"],
+                                )
+                                .pick_file()
+                            {
+                                self.input_file = f.display().to_string();
+                                if self.app_name.is_empty() {
+                                    self.app_name = derive_name(&f);
+                                }
                             }
                         }
-                    }
-                    ui.end_row();
+                        ui.end_row();
 
-                    ui.label("应用名称");
-                    ui.add(egui::TextEdit::singleline(&mut self.app_name).desired_width(w).hint_text("便携应用的文件夹名"));
-                    ui.end_row();
+                        ui.label("应用名称");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.app_name)
+                                .desired_width(w)
+                                .hint_text("便携应用的文件夹名"),
+                        );
+                        ui.end_row();
 
-                    ui.label("输出目录");
-                    ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(w));
-                    if ui.button("浏览…").clicked() {
-                        if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                            self.output_dir = d.display().to_string();
+                        ui.label("输出目录");
+                        ui.add(egui::TextEdit::singleline(&mut self.output_dir).desired_width(w));
+                        if ui.button("浏览…").clicked() {
+                            if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                                self.output_dir = d.display().to_string();
+                            }
                         }
-                    }
-                    ui.end_row();
-                });
+                        ui.end_row();
+                    });
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -148,14 +159,30 @@ impl App {
 
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    let btn = fluent::accent_button(ui, if self.busy { "正在处理…" } else { "创建便携应用" });
+                    let btn = fluent::accent_button(
+                        ui,
+                        if self.busy {
+                            "正在处理…"
+                        } else {
+                            "创建便携应用"
+                        },
+                    );
                     if btn.clicked() && !self.busy {
                         self.start_build();
                     }
                     ui.add_space(4.0);
                     ui.vertical(|ui| {
-                        ui.add(egui::ProgressBar::new(self.progress).show_percentage().desired_height(14.0).desired_width(240.0));
-                        ui.label(egui::RichText::new(&self.status).size(11.0).color(Color32::from_rgb(0x88, 0x88, 0x88)));
+                        ui.add(
+                            egui::ProgressBar::new(self.progress)
+                                .show_percentage()
+                                .desired_height(14.0)
+                                .desired_width(240.0),
+                        );
+                        ui.label(
+                            egui::RichText::new(&self.status)
+                                .size(11.0)
+                                .color(Color32::from_rgb(0x88, 0x88, 0x88)),
+                        );
                     });
                 });
 
@@ -166,18 +193,25 @@ impl App {
                         .corner_radius(egui::CornerRadius::same(6))
                         .inner_margin(10.0)
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                                for l in &self.log {
-                                    let color = if l.starts_with("✔") {
-                                        Color32::from_rgb(0x6C, 0xC6, 0x44)
-                                    } else if l.starts_with("✖") {
-                                        Color32::from_rgb(0xE8, 0x11, 0x23)
-                                    } else {
-                                        Color32::from_rgb(0xCC, 0xCC, 0xCC)
-                                    };
-                                    ui.label(egui::RichText::new(l).monospace().size(12.0).color(color));
-                                }
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(220.0)
+                                .show(ui, |ui| {
+                                    for l in &self.log {
+                                        let color = if l.starts_with("✔") {
+                                            Color32::from_rgb(0x6C, 0xC6, 0x44)
+                                        } else if l.starts_with("✖") {
+                                            Color32::from_rgb(0xE8, 0x11, 0x23)
+                                        } else {
+                                            Color32::from_rgb(0xCC, 0xCC, 0xCC)
+                                        };
+                                        ui.label(
+                                            egui::RichText::new(l)
+                                                .monospace()
+                                                .size(12.0)
+                                                .color(color),
+                                        );
+                                    }
+                                });
                         });
                 }
             });
@@ -185,7 +219,8 @@ impl App {
 
     fn start_build(&mut self) {
         if self.input_file.is_empty() || self.app_name.is_empty() || self.output_dir.is_empty() {
-            self.log.push("✖ 请先填写安装包文件、应用名称和输出目录".into());
+            self.log
+                .push("✖ 请先填写安装包文件、应用名称和输出目录".into());
             return;
         }
         self.busy = true;
@@ -198,8 +233,10 @@ impl App {
         let name = self.app_name.clone();
         let out = PathBuf::from(&self.output_dir);
         let pack_kind = self.pack;
-        let mut cfg = Config::default();
-        cfg.deep_extract = self.deep_extract;
+        let cfg = Config {
+            deep_extract: self.deep_extract,
+            ..Config::default()
+        };
         std::thread::spawn(move || {
             let send = |m: Msg| tx.send(m).ok();
             let result = pipeline::run(&file, &name, &out, pack_kind, None, &cfg, &mut |p, msg| {

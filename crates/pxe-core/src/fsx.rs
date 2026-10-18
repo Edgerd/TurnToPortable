@@ -22,7 +22,9 @@ fn rec(dir: &Path, depth: usize, max: usize, skip: &[&str], out: &mut Vec<PathBu
     if depth > max {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -50,11 +52,9 @@ pub fn move_dir_contents(src: &Path, dst: &Path) -> Result<()> {
             std::fs::create_dir_all(&to)?;
             move_dir_contents(&from, &to)?;
             let _ = std::fs::remove_dir(&from);
-        } else {
-            if std::fs::rename(&from, &to).is_err() {
-                std::fs::copy(&from, &to)?;
-                let _ = std::fs::remove_file(&from);
-            }
+        } else if std::fs::rename(&from, &to).is_err() {
+            std::fs::copy(&from, &to)?;
+            let _ = std::fs::remove_file(&from);
         }
     }
     Ok(())
@@ -76,7 +76,10 @@ mod tests {
         std::fs::write(tmp.join("a/b/c/deeper.txt"), "").unwrap();
 
         let files = walk_files_skipping(&tmp, 4, &["$PLUGINSDIR"]);
-        let names: Vec<String> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
         assert!(names.contains(&"top.txt".to_string()));
         assert!(names.contains(&"deep.txt".to_string()));
         assert!(!names.iter().any(|n| n == "inner.dll"));

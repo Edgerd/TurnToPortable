@@ -40,9 +40,7 @@ exit /b 0
 }
 
 pub fn run_bat(app_name: &str) -> String {
-    format!(
-        "@echo off\r\necho Starting {app_name}...\r\ncall \"%~dp0{app_name}.bat\"\r\n"
-    )
+    format!("@echo off\r\necho Starting {app_name}...\r\ncall \"%~dp0{app_name}.bat\"\r\n")
 }
 
 pub fn ps1(app_name: &str, exe_rel: &str) -> String {
@@ -80,7 +78,17 @@ exe = "{exe_rel}"
 /// 优先选择主程序 exe：名字精确匹配 > 名字包含 app 名 > 排除卸载器/安装器后取最大的 exe
 /// （原版"取最小的非 unins/setup exe"会命中崩溃上报器之类的辅助进程）。
 pub fn find_main_exe(app_dir: &Path, app_name: &str) -> Option<PathBuf> {
-    let helpers = ["unins", "setup", "install", "update", "crash", "error", "report", "vc_redist", "eula"];
+    let helpers = [
+        "unins",
+        "setup",
+        "install",
+        "update",
+        "crash",
+        "error",
+        "report",
+        "vc_redist",
+        "eula",
+    ];
     let lower_name = app_name.to_lowercase();
 
     let mut best: Option<(i32, u64, PathBuf)> = None;
@@ -93,7 +101,11 @@ pub fn find_main_exe(app_dir: &Path, app_name: &str) -> Option<PathBuf> {
             continue;
         }
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
         let score = if stem == lower_name {
             2
@@ -102,7 +114,10 @@ pub fn find_main_exe(app_dir: &Path, app_name: &str) -> Option<PathBuf> {
         } else {
             0
         };
-        if best.as_ref().is_none_or(|(s, sz, _)| (score, size) > (*s, *sz)) {
+        if best
+            .as_ref()
+            .is_none_or(|(s, sz, _)| (score, size) > (*s, *sz))
+        {
             best = Some((score, size, p));
         }
     }
@@ -125,6 +140,9 @@ mod tests {
     fn bat_has_valid_syntax() {
         let bat = main_bat("MyApp", "MyApp.exe");
         assert!(bat.contains("exit /b"));
-        assert!(!bat.lines().any(|l| l.trim() == "return"), "bat must not use invalid `return`");
+        assert!(
+            !bat.lines().any(|l| l.trim() == "return"),
+            "bat must not use invalid `return`"
+        );
     }
 }

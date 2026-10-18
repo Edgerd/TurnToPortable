@@ -60,24 +60,33 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
     std::fs::create_dir_all(dest)?;
 
     let attempts: &[(InstallerKind, &str)] = match kind {
-        InstallerKind::InnoSetup => {
-            &[(InstallerKind::InnoSetup, "innoextract"), (InstallerKind::Sfx7z, "embedded-7z")]
-        }
-        InstallerKind::Nsis => &[(InstallerKind::Sfx7z, "embedded-7z"), (InstallerKind::Nsis, "external-7z")],
-        InstallerKind::Sfx7z | InstallerKind::InstallShield | InstallerKind::WiXBurn => {
-            &[(InstallerKind::Sfx7z, "embedded-7z"), (InstallerKind::Nsis, "external-7z")]
-        }
+        InstallerKind::InnoSetup => &[
+            (InstallerKind::InnoSetup, "innoextract"),
+            (InstallerKind::Sfx7z, "embedded-7z"),
+        ],
+        InstallerKind::Nsis => &[
+            (InstallerKind::Sfx7z, "embedded-7z"),
+            (InstallerKind::Nsis, "external-7z"),
+        ],
+        InstallerKind::Sfx7z | InstallerKind::InstallShield | InstallerKind::WiXBurn => &[
+            (InstallerKind::Sfx7z, "embedded-7z"),
+            (InstallerKind::Nsis, "external-7z"),
+        ],
         InstallerKind::Msi => &[(InstallerKind::Msi, "msiexec")],
-        InstallerKind::Msix | InstallerKind::Appx | InstallerKind::Zip | InstallerKind::Squirrel => {
-            &[(InstallerKind::Zip, "embedded-zip")]
-        }
+        InstallerKind::Msix
+        | InstallerKind::Appx
+        | InstallerKind::Zip
+        | InstallerKind::Squirrel => &[(InstallerKind::Zip, "embedded-zip")],
         InstallerKind::SevenZip => &[(InstallerKind::Sfx7z, "embedded-7z")],
         InstallerKind::Rar | InstallerKind::SfxRar => &[(InstallerKind::Rar, "unrar")],
         InstallerKind::Tar => &[(InstallerKind::Tar, "embedded-tar")],
         InstallerKind::TarGz => &[(InstallerKind::TarGz, "embedded-targz")],
         InstallerKind::Gz => &[(InstallerKind::Gz, "embedded-gzip")],
         InstallerKind::Cab => &[(InstallerKind::Cab, "expand")],
-        _ => &[(InstallerKind::Zip, "embedded-zip"), (InstallerKind::Sfx7z, "embedded-7z")],
+        _ => &[
+            (InstallerKind::Zip, "embedded-zip"),
+            (InstallerKind::Sfx7z, "embedded-7z"),
+        ],
     };
 
     // 串联所有尝试的错误（主解包器在前 —— 通常信息量最大）
@@ -87,19 +96,40 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
             InstallerKind::Zip => extract_zip(path, dest),
             InstallerKind::Sfx7z => extract_7z_embedded(path, dest),
             InstallerKind::Nsis => extract_7z_external(path, dest),
-            InstallerKind::Tar => extract_tar(std::io::BufReader::new(std::fs::File::open(path)?), dest),
-            InstallerKind::TarGz => extract_tar(flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?), dest),
+            InstallerKind::Tar => {
+                extract_tar(std::io::BufReader::new(std::fs::File::open(path)?), dest)
+            }
+            InstallerKind::TarGz => extract_tar(
+                flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?),
+                dest,
+            ),
             InstallerKind::Gz => extract_gz(path, dest),
-            InstallerKind::Cab => extract_external("expand", &[
-                "-r".into(), path.display().to_string(), dest.display().to_string(),
-            ]),
-            InstallerKind::InnoSetup => extract_external("innoextract", &[
-                "-d".into(), dest.display().to_string(), "-s".into(), path.display().to_string(),
-            ]),
+            InstallerKind::Cab => extract_external(
+                "expand",
+                &[
+                    "-r".into(),
+                    path.display().to_string(),
+                    dest.display().to_string(),
+                ],
+            ),
+            InstallerKind::InnoSetup => extract_external(
+                "innoextract",
+                &[
+                    "-d".into(),
+                    dest.display().to_string(),
+                    "-s".into(),
+                    path.display().to_string(),
+                ],
+            ),
             InstallerKind::Msi => extract_msi(path, dest),
-            InstallerKind::Rar => extract_external("unrar", &[
-                "x".into(), path.display().to_string(), format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR),
-            ]),
+            InstallerKind::Rar => extract_external(
+                "unrar",
+                &[
+                    "x".into(),
+                    path.display().to_string(),
+                    format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR),
+                ],
+            ),
             _ => continue,
         };
         match r {
@@ -118,24 +148,35 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                         if let Some(inner) = find_pluginsdir_7z(dest) {
                             let tmp = dest.join(".__pxe_inner");
                             let _ = std::fs::remove_dir_all(&tmp);
-                            if sevenz_rust::decompress_file(&inner, &tmp).is_ok() && validate(&tmp) {
+                            if sevenz_rust::decompress_file(&inner, &tmp).is_ok() && validate(&tmp)
+                            {
                                 // 清空 dest（保留 tmp），再把内层内容移进来
                                 for e in std::fs::read_dir(dest)?.flatten() {
                                     if e.file_name() != ".__pxe_inner" {
                                         let p = e.path();
-                                        if p.is_dir() { std::fs::remove_dir_all(&p)?; } else { std::fs::remove_file(&p)?; }
+                                        if p.is_dir() {
+                                            std::fs::remove_dir_all(&p)?;
+                                        } else {
+                                            std::fs::remove_file(&p)?;
+                                        }
                                     }
                                 }
                                 copy_dir_contents(&tmp, dest)?;
                                 std::fs::remove_dir_all(&tmp)?;
-                                return Ok(Extracted { dir: dest.to_path_buf(), via: "nsis-app-7z".into() });
+                                return Ok(Extracted {
+                                    dir: dest.to_path_buf(),
+                                    via: "nsis-app-7z".into(),
+                                });
                             }
                             let _ = std::fs::remove_dir_all(&tmp);
                         }
                     }
                 }
                 if validate(dest) {
-                    return Ok(Extracted { dir: dest.to_path_buf(), via: label.to_string() });
+                    return Ok(Extracted {
+                        dir: dest.to_path_buf(),
+                        via: label.to_string(),
+                    });
                 }
                 errs.push(format!("{label}: output failed validation"));
             }
@@ -250,7 +291,11 @@ fn try_extract_candidate(path: &Path, tmp: &Path) -> bool {
         // 7z：内嵌优先（无依赖），失败回退外部 7z（sevenz_rust 不支持部分压缩方法）
         "7z" => {
             let embedded = extract_7z_embedded(path, tmp);
-            if embedded.is_ok() { embedded } else { extract_7z_external(path, tmp) }
+            if embedded.is_ok() {
+                embedded
+            } else {
+                extract_7z_external(path, tmp)
+            }
         }
         "zip" => extract_zip(path, tmp),
         "tar" => match std::fs::File::open(path) {
@@ -307,12 +352,18 @@ fn extract_7z_external(path: &Path, dest: &Path) -> Result<()> {
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(["x", "-y", &format!("-o{}", dest.display())]);
     cmd.arg(path);
-    let (status, stderr) = run_with_timeout(no_window(cmd))
-        .map_err(|e| Error::Extraction(e.to_string()))?;
+    let (status, stderr) =
+        run_with_timeout(no_window(cmd)).map_err(|e| Error::Extraction(e.to_string()))?;
     if !status.success() {
         let detail = stderr.trim();
-        let last = detail.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
-        return Err(Error::Extraction(format!("7z exited with {status}: {last}")));
+        let last = detail
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
+        return Err(Error::Extraction(format!(
+            "7z exited with {status}: {last}"
+        )));
     }
     Ok(())
 }
@@ -332,7 +383,8 @@ fn find_7z() -> Option<PathBuf> {
 fn extract_tar<R: std::io::Read>(reader: R, dest: &Path) -> Result<()> {
     let mut tar = tar::Archive::new(reader);
     tar.set_preserve_permissions(false);
-    tar.unpack(dest).map_err(|e| Error::Extraction(format!("tar: {e}")))
+    tar.unpack(dest)
+        .map_err(|e| Error::Extraction(format!("tar: {e}")))
 }
 
 /// 单文件 gzip：解出来若内嵌 tar 则继续按 tar 解包，否则落成单个文件
@@ -346,7 +398,8 @@ fn extract_gz(path: &Path, dest: &Path) -> Result<()> {
     let f = std::fs::File::open(path)?;
     let mut d = flate2::read::MultiGzDecoder::new(f);
     let mut buf = Vec::new();
-    d.read_to_end(&mut buf).map_err(|e| Error::Extraction(format!("gzip: {e}")))?;
+    d.read_to_end(&mut buf)
+        .map_err(|e| Error::Extraction(format!("gzip: {e}")))?;
     // tar 头（前 512 字节 offset 257 = ustar）→ 按 tar 解
     if buf.len() > 512 && &buf[257..262] == b"ustar" {
         return extract_tar(std::io::Cursor::new(buf), dest);
@@ -417,8 +470,8 @@ fn extract_external(tool: &str, args: &[String]) -> Result<()> {
     }
     let mut cmd = std::process::Command::new(tool);
     cmd.args(args);
-    let (status, stderr) = run_with_timeout(no_window(cmd))
-        .map_err(|e| Error::Extraction(e.to_string()))?;
+    let (status, stderr) =
+        run_with_timeout(no_window(cmd)).map_err(|e| Error::Extraction(e.to_string()))?;
     if !status.success() {
         let detail = stderr.trim();
         if detail.is_empty() {
@@ -441,16 +494,28 @@ fn extract_external(tool: &str, args: &[String]) -> Result<()> {
 fn extract_msi(path: &Path, dest: &Path) -> Result<()> {
     if cfg!(windows) {
         let mut cmd = std::process::Command::new("msiexec");
-        cmd.args(["/a", &path.display().to_string(), "/qb", &format!("TARGETDIR={}", dest.display())]);
-        let (status, _stderr) = run_with_timeout(no_window(cmd))
-            .map_err(|e| Error::Extraction(e.to_string()))?;
+        cmd.args([
+            "/a",
+            &path.display().to_string(),
+            "/qb",
+            &format!("TARGETDIR={}", dest.display()),
+        ]);
+        let (status, _stderr) =
+            run_with_timeout(no_window(cmd)).map_err(|e| Error::Extraction(e.to_string()))?;
         if !status.success() {
             return Err(Error::Extraction(format!("msiexec exited with {status}")));
         }
         Ok(())
     } else {
         // 非 Windows（CI/开发环境）：用 msitools 的 msiextract 做管理解包
-        extract_external("msiextract", &["--directory".into(), dest.display().to_string(), path.display().to_string()])
+        extract_external(
+            "msiextract",
+            &[
+                "--directory".into(),
+                dest.display().to_string(),
+                path.display().to_string(),
+            ],
+        )
     }
 }
 
@@ -493,9 +558,11 @@ pub fn validate(dir: &Path) -> bool {
             has_pe = true;
         }
         // 原版的问题：7z 硬解 PE 会吐出 .text/.rdata 碎片 —— 视为失败
-        if ["text", "rdata", "data", "idata", "edata", "rsrc", "reloc", "bss"]
-            .iter()
-            .any(|s| name.starts_with(&format!("{s}.")) || name == *s)
+        if [
+            "text", "rdata", "data", "idata", "edata", "rsrc", "reloc", "bss",
+        ]
+        .iter()
+        .any(|s| name.starts_with(&format!("{s}.")) || name == *s)
         {
             fragment_sections += 1;
         }
@@ -518,7 +585,10 @@ fn find_pluginsdir_7z(dest: &Path) -> Option<PathBuf> {
     let mut best: Option<(u64, PathBuf)> = None;
     for e in rd.flatten() {
         let p = e.path();
-        if p.extension().map(|x| x.eq_ignore_ascii_case("7z")).unwrap_or(false) {
+        if p.extension()
+            .map(|x| x.eq_ignore_ascii_case("7z"))
+            .unwrap_or(false)
+        {
             let sz = e.metadata().map(|m| m.len()).unwrap_or(0);
             if best.as_ref().map(|(s, _)| sz > *s).unwrap_or(true) {
                 best = Some((sz, p));
@@ -538,7 +608,11 @@ fn has_exe_outside_pluginsdir(dir: &Path) -> bool {
 fn max_exe_outside_pluginsdir(dir: &Path) -> Option<u64> {
     crate::fsx::walk_files_skipping(dir, 4, &["$PLUGINSDIR", ".__pxe_deep"])
         .into_iter()
-        .filter(|p| p.extension().map(|x| x.eq_ignore_ascii_case("exe")).unwrap_or(false))
+        .filter(|p| {
+            p.extension()
+                .map(|x| x.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+        })
         .filter_map(|p| std::fs::metadata(&p).ok().map(|m| m.len()))
         .max()
 }
@@ -552,7 +626,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("pxe_test_frag");
         clear_dir(&tmp).unwrap();
         for s in [".text", ".rdata", ".data", ".idata", ".rsrc"] {
-            std::fs::write(tmp.join(format!("{s}")), b"").unwrap();
+            std::fs::write(tmp.join(s.to_string()), b"").unwrap();
         }
         assert!(!validate(&tmp));
         std::fs::remove_dir_all(&tmp).ok();

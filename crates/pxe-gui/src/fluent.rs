@@ -21,8 +21,8 @@ impl FluentTheme {
         let mut style = Style::default();
         let (bg, card, stroke, text, _subtle_text) = if self.dark {
             (
-                Color32::from_rgb(0x20, 0x20, 0x20),   // Mica-like base
-                Color32::from_rgb(0x2B, 0x2B, 0x2B),   // card layer
+                Color32::from_rgb(0x20, 0x20, 0x20), // Mica-like base
+                Color32::from_rgb(0x2B, 0x2B, 0x2B), // card layer
                 Color32::from_rgb(0x3D, 0x3D, 0x3D),
                 Color32::from_rgb(0xFF, 0xFF, 0xFF),
                 Color32::from_rgb(0xC8, 0xC8, 0xC8),
@@ -43,18 +43,39 @@ impl FluentTheme {
             override_text_color: Some(text),
             window_fill: card,
             panel_fill: bg,
-            extreme_bg_color: if self.dark { Color32::from_rgb(0x14, 0x14, 0x14) } else { Color32::WHITE },
-            faint_bg_color: if self.dark { Color32::from_rgb(0x33, 0x33, 0x33) } else { Color32::from_rgb(0xE8, 0xE8, 0xE8) },
+            extreme_bg_color: if self.dark {
+                Color32::from_rgb(0x14, 0x14, 0x14)
+            } else {
+                Color32::WHITE
+            },
+            faint_bg_color: if self.dark {
+                Color32::from_rgb(0x33, 0x33, 0x33)
+            } else {
+                Color32::from_rgb(0xE8, 0xE8, 0xE8)
+            },
             widgets: egui::style::Widgets {
                 noninteractive: widget_style(bg, stroke, text, 4.0),
                 inactive: widget_style(card, stroke, text, 4.0),
                 hovered: widget_style(
-                    if self.dark { Color32::from_rgb(0x35, 0x35, 0x35) } else { Color32::from_rgb(0xF5, 0xF5, 0xF5) },
+                    if self.dark {
+                        Color32::from_rgb(0x35, 0x35, 0x35)
+                    } else {
+                        Color32::from_rgb(0xF5, 0xF5, 0xF5)
+                    },
                     stroke,
                     text,
                     4.0,
                 ),
-                active: widget_style(if self.dark { Color32::from_rgb(0x3D, 0x3D, 0x3D) } else { Color32::from_rgb(0xEB, 0xEB, 0xEB) }, stroke, text, 4.0),
+                active: widget_style(
+                    if self.dark {
+                        Color32::from_rgb(0x3D, 0x3D, 0x3D)
+                    } else {
+                        Color32::from_rgb(0xEB, 0xEB, 0xEB)
+                    },
+                    stroke,
+                    text,
+                    4.0,
+                ),
                 open: widget_style(card, stroke, text, 4.0),
             },
             selection: egui::style::Selection {
@@ -72,7 +93,11 @@ impl FluentTheme {
         // Proportional 首位，正文会变成等宽渲染）。
         let mut fonts = egui::FontDefinitions::default();
         let find_font = |candidates: &[&str]| -> Option<Vec<u8>> {
-            for p in ["C:\\Windows\\Fonts\\", "/usr/share/fonts/", "/System/Library/Fonts/"] {
+            for p in [
+                "C:\\Windows\\Fonts\\",
+                "/usr/share/fonts/",
+                "/System/Library/Fonts/",
+            ] {
                 for n in candidates {
                     if let Ok(data) = std::fs::read(format!("{p}{n}")) {
                         return Some(data);
@@ -81,13 +106,31 @@ impl FluentTheme {
             }
             None
         };
-        if let Some(data) = find_font(&["msyh.ttc", "msyh.ttf", "simhei.ttf", "simsum.ttc", "PingFang SC.ttf"]) {
-            fonts.font_data.insert("cn".into(), egui::FontData::from_owned(data).into());
-            fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "cn".into());
+        if let Some(data) = find_font(&[
+            "msyh.ttc",
+            "msyh.ttf",
+            "simhei.ttf",
+            "simsum.ttc",
+            "PingFang SC.ttf",
+        ]) {
+            fonts
+                .font_data
+                .insert("cn".into(), egui::FontData::from_owned(data).into());
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "cn".into());
         }
         if let Some(data) = find_font(&["msyh.ttc", "simhei.ttf", "PingFang SC.ttf"]) {
-            fonts.font_data.insert("cn_mono".into(), egui::FontData::from_owned(data).into());
-            fonts.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "cn_mono".into());
+            fonts
+                .font_data
+                .insert("cn_mono".into(), egui::FontData::from_owned(data).into());
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "cn_mono".into());
         }
         ctx.set_fonts(fonts);
         let mut text_styles = style.text_styles.clone();
@@ -116,7 +159,12 @@ impl FluentTheme {
     }
 }
 
-fn widget_style(bg: Color32, stroke: Color32, text: Color32, radius: f32) -> egui::style::WidgetVisuals {
+fn widget_style(
+    bg: Color32,
+    stroke: Color32,
+    text: Color32,
+    radius: f32,
+) -> egui::style::WidgetVisuals {
     egui::style::WidgetVisuals {
         bg_fill: bg,
         weak_bg_fill: bg,

@@ -36,7 +36,18 @@ pub enum InstallerKind {
 
 impl InstallerKind {
     pub fn is_archive(&self) -> bool {
-        matches!(self, Self::Zip | Self::SevenZip | Self::Rar | Self::Tar | Self::TarGz | Self::Gz | Self::Cab | Self::Msix | Self::Appx)
+        matches!(
+            self,
+            Self::Zip
+                | Self::SevenZip
+                | Self::Rar
+                | Self::Tar
+                | Self::TarGz
+                | Self::Gz
+                | Self::Cab
+                | Self::Msix
+                | Self::Appx
+        )
     }
 
     pub fn is_installer(&self) -> bool {
@@ -135,28 +146,58 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
 
     // --- 1. 魔数检测（最高优先级） ---
     if head.starts_with(MAGIC_MSI) {
-        return Ok(Detection { kind: InstallerKind::Msi, note: None, pe: None, sha256 });
+        return Ok(Detection {
+            kind: InstallerKind::Msi,
+            note: None,
+            pe: None,
+            sha256,
+        });
     }
     if head.starts_with(MAGIC_7Z) {
-        return Ok(Detection { kind: InstallerKind::SevenZip, note: None, pe: None, sha256 });
+        return Ok(Detection {
+            kind: InstallerKind::SevenZip,
+            note: None,
+            pe: None,
+            sha256,
+        });
     }
     if head.starts_with(MAGIC_RAR4) || head.starts_with(MAGIC_RAR5) {
-        return Ok(Detection { kind: InstallerKind::Rar, note: None, pe: None, sha256 });
+        return Ok(Detection {
+            kind: InstallerKind::Rar,
+            note: None,
+            pe: None,
+            sha256,
+        });
     }
     if head.starts_with(b"PK\x03\x04") {
         return detect_zip_family(path, &sha256);
     }
     if head.len() > 512 && &head[257..262] == MAGIC_USTAR {
-        return Ok(Detection { kind: InstallerKind::Tar, note: None, pe: None, sha256 });
+        return Ok(Detection {
+            kind: InstallerKind::Tar,
+            note: None,
+            pe: None,
+            sha256,
+        });
     }
     // GZIP 家族：进一步嗅探内部是 tar 还是单文件
     if head.starts_with(b"\x1f\x8b") {
         let kind = sniff_gzip(&head);
-        return Ok(Detection { kind, note: None, pe: None, sha256 });
+        return Ok(Detection {
+            kind,
+            note: None,
+            pe: None,
+            sha256,
+        });
     }
     // Windows CAB（expand.exe 可解）
     if head.starts_with(b"MSCF") {
-        return Ok(Detection { kind: InstallerKind::Cab, note: None, pe: None, sha256 });
+        return Ok(Detection {
+            kind: InstallerKind::Cab,
+            note: None,
+            pe: None,
+            sha256,
+        });
     }
 
     // --- 2. PE 结构检测 ---
@@ -176,7 +217,11 @@ pub fn detect(path: &Path) -> crate::Result<Detection> {
     }
 
     Ok(Detection {
-        kind: if pe_info.is_valid_pe { InstallerKind::Standalone } else { InstallerKind::Unknown },
+        kind: if pe_info.is_valid_pe {
+            InstallerKind::Standalone
+        } else {
+            InstallerKind::Unknown
+        },
         note: None,
         pe: (pe_info.is_valid_pe).then_some(pe_info),
         sha256,
@@ -215,7 +260,14 @@ fn sniff_gzip(data: &[u8]) -> InstallerKind {
 
 /// ZIP 家族：MSIX / AppX / Squirrel / 普通 ZIP（EOCD 在文件尾，zip crate 自行 seek，不整读）
 fn detect_zip_family(path: &Path, sha256: &str) -> crate::Result<Detection> {
-    let d = |kind, note| Ok(Detection { kind, note, pe: None, sha256: sha256.to_string() });
+    let d = |kind, note| {
+        Ok(Detection {
+            kind,
+            note,
+            pe: None,
+            sha256: sha256.to_string(),
+        })
+    };
     if let Ok(mut z) = zip::ZipArchive::new(std::fs::File::open(path)?) {
         let names: Vec<String> = (0..z.len())
             .filter_map(|i| z.by_index_raw(i).ok().map(|f| f.name().to_string()))
@@ -223,10 +275,16 @@ fn detect_zip_family(path: &Path, sha256: &str) -> crate::Result<Detection> {
 
         let has = |n: &str| names.iter().any(|f| f.eq_ignore_ascii_case(n));
         if has("AppxManifest.xml") {
-            let kind = if has("AppxBlockMap.xml") { InstallerKind::Msix } else { InstallerKind::Appx };
+            let kind = if has("AppxBlockMap.xml") {
+                InstallerKind::Msix
+            } else {
+                InstallerKind::Appx
+            };
             return d(kind, None);
         }
-        if names.iter().any(|f| f.ends_with(".nupkg")) && names.iter().any(|f| f.contains("Squirrel")) {
+        if names.iter().any(|f| f.ends_with(".nupkg"))
+            && names.iter().any(|f| f.contains("Squirrel"))
+        {
             return d(
                 InstallerKind::Squirrel,
                 Some("Squirrel: nupkg + Squirrel.exe inside ZIP".into()),
@@ -234,7 +292,10 @@ fn detect_zip_family(path: &Path, sha256: &str) -> crate::Result<Detection> {
         }
         return d(InstallerKind::Zip, None);
     }
-    d(InstallerKind::Unknown, Some("PK header but broken ZIP".into()))
+    d(
+        InstallerKind::Unknown,
+        Some("PK header but broken ZIP".into()),
+    )
 }
 
 /// PE 内的安装器特征：
@@ -305,7 +366,12 @@ mod tests {
     fn msi_magic() {
         let mut d = vec![0u8; 1024];
         d[..8].copy_from_slice(MAGIC_MSI);
-        let info = Detection { kind: InstallerKind::Unknown, note: None, pe: None, sha256: String::new() };
+        let info = Detection {
+            kind: InstallerKind::Unknown,
+            note: None,
+            pe: None,
+            sha256: String::new(),
+        };
         assert!(!info.is_installer());
         assert!(d.starts_with(MAGIC_MSI));
     }

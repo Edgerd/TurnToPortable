@@ -52,7 +52,9 @@ impl Config {
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
         }
-        std::fs::write(path, toml::to_string_pretty(self).unwrap())?;
+        let s = toml::to_string_pretty(self)
+            .map_err(|e| crate::Error::Config(format!("serialize config: {e}")))?;
+        std::fs::write(path, s)?;
         Ok(())
     }
 }

@@ -51,18 +51,32 @@ enum Cmd {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_env_filter(
-        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-    ).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
 
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Detect { file } => cmd_detect(&file)?,
-        Cmd::Extract { file, out, no_deep_extract } => {
+        Cmd::Extract {
+            file,
+            out,
+            no_deep_extract,
+        } => {
             pxe_core::extract::set_deep_extract(!no_deep_extract);
             cmd_extract(&file, &out)?;
         }
-        Cmd::Build { file, name, out, pack, redist, config, no_deep_extract } => {
+        Cmd::Build {
+            file,
+            name,
+            out,
+            pack,
+            redist,
+            config,
+            no_deep_extract,
+        } => {
             cmd_build(&file, name, out, pack, redist, &config, no_deep_extract)?;
         }
     }
@@ -73,7 +87,10 @@ fn cmd_detect(file: &Path) -> anyhow::Result<()> {
     let d = detect::detect(file).context("detect failed")?;
     println!("File:        {}", file.display());
     println!("Type:        {}", d.kind.label());
-    println!("Installer:   {}", if d.is_installer() { "yes" } else { "no" });
+    println!(
+        "Installer:   {}",
+        if d.is_installer() { "yes" } else { "no" }
+    );
     println!("SHA256:      {}", d.sha256);
     if let Some(note) = &d.note {
         println!("Note:        {note}");
@@ -115,8 +132,16 @@ fn cmd_build(
         println!("[pxe|progress|{p:.2}|{msg}]");
     };
 
-    let r = pipeline::run(file, &app_name, &out_dir, pack_kind, redist.as_deref(), &cfg, &mut progress)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let r = pipeline::run(
+        file,
+        &app_name,
+        &out_dir,
+        pack_kind,
+        redist.as_deref(),
+        &cfg,
+        &mut progress,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("[pxe] portable app: {}", r.portable_dir.display());
     if let Some(exe) = &r.main_exe {
         println!("[pxe] native stub launcher: {}", exe.display());

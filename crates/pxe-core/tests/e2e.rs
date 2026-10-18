@@ -33,11 +33,22 @@ fn build_standalone_zip_end_to_end() {
     .expect("build should succeed");
 
     // 结构断言
-    for p in ["App", "Data/AppData", "Data/Registry", "Documentation", "Plugins", "Redist/README.md", "portable.toml"] {
+    for p in [
+        "App",
+        "Data/AppData",
+        "Data/Registry",
+        "Documentation",
+        "Plugins",
+        "Redist/README.md",
+        "portable.toml",
+    ] {
         assert!(r.portable_dir.join(p).exists(), "missing {p}");
     }
     // 主程序识别：bat 启动器里指向 MyTool.exe（main_exe 仅在 stub 存在时为 Some）
-    assert!(r.main_exe.as_ref().is_none_or(|p| p.ends_with("MyTool.exe")));
+    assert!(r
+        .main_exe
+        .as_ref()
+        .is_none_or(|p| p.ends_with("MyTool.exe")));
     let bat = std::fs::read_to_string(r.portable_dir.join("MyTool.bat")).unwrap();
     assert!(bat.contains("MyTool.exe"));
     // 启动器
@@ -48,13 +59,21 @@ fn build_standalone_zip_end_to_end() {
     assert!(!bat.lines().any(|l| l.trim() == "return"));
     assert!(bat.contains("exit /b"));
     // zip 产物
-    assert!(r.packed.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e == "zip")));
+    assert!(r
+        .packed
+        .as_ref()
+        .is_some_and(|p| p.extension().is_some_and(|e| e == "zip")));
 
     // zip 内容校验
     let f = std::fs::File::open(r.packed.unwrap()).unwrap();
     let mut z = zip::ZipArchive::new(f).unwrap();
-    let names: Vec<String> = (0..z.len()).filter_map(|i| z.by_index_raw(i).ok().map(|e| e.name().to_string())).collect();
-    assert!(names.iter().any(|n| n == "App/MyTool.exe"), "zip missing App/MyTool.exe: {names:?}");
+    let names: Vec<String> = (0..z.len())
+        .filter_map(|i| z.by_index_raw(i).ok().map(|e| e.name().to_string()))
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "App/MyTool.exe"),
+        "zip missing App/MyTool.exe: {names:?}"
+    );
 
     std::fs::remove_dir_all(&src).ok();
     std::fs::remove_dir_all(&out).ok();

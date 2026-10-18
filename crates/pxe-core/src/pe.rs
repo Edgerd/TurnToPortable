@@ -9,7 +9,7 @@ pub struct PeInfo {
     pub architecture: String,
     pub subsystem: String,
     pub sections: Vec<String>,
-    pub imports: Vec<String>,   // 原版永远是空列表，这里真正解析
+    pub imports: Vec<String>,        // 原版永远是空列表，这里真正解析
     pub resource_types: Vec<String>, // 原版同样从未实现
 }
 
@@ -55,7 +55,11 @@ pub fn parse_bytes(data: &[u8]) -> PeInfo {
     info.sections = obj
         .sections
         .iter()
-        .filter_map(|s| std::str::from_utf8(&s.name).ok().map(|n| n.trim_end_matches('\0').to_string()))
+        .filter_map(|s| {
+            std::str::from_utf8(&s.name)
+                .ok()
+                .map(|n| n.trim_end_matches('\0').to_string())
+        })
         .collect();
 
     // 真正解析导入表（原版只有字段没有实现）
@@ -70,7 +74,11 @@ pub fn parse_bytes(data: &[u8]) -> PeInfo {
     // 资源表：goblin 0.9 未暴露 ResourceTable，改用资源数据目录（index 2）判断存在性，
     // 并回读 .rsrc 节名。清单/版本信息可通过后续扩展解析。
     if let Some(h) = obj.header.optional_header {
-        if h.data_directories.get_resource_table().map(|d| d.size > 0).unwrap_or(false) {
+        if h.data_directories
+            .get_resource_table()
+            .map(|d| d.size > 0)
+            .unwrap_or(false)
+        {
             info.resource_types.push("RESOURCE_TABLE".into());
         }
     }

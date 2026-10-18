@@ -69,9 +69,9 @@ fn run() -> Result<(), String> {
     // PathBuf::push 绝对路径会整体替换 PATH，前缀丢失）
     if let Some(old) = std::env::var_os("PATH") {
         let deps = app_dir.join("Dependencies");
-        if let Ok(joined) = std::env::join_paths(
-            std::iter::once(deps).chain(std::env::split_paths(&old)),
-        ) {
+        if let Ok(joined) =
+            std::env::join_paths(std::iter::once(deps).chain(std::env::split_paths(&old)))
+        {
             std::env::set_var("PATH", joined);
         }
     }
@@ -87,7 +87,9 @@ fn run() -> Result<(), String> {
 }
 
 fn append_log(msg: &str) {
-    let Ok(exe) = std::env::current_exe() else { return };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
     let Some(root) = exe.parent() else { return };
     let log_dir = root.join("Data/Logs");
     if std::fs::create_dir_all(&log_dir).is_err() {
@@ -98,7 +100,11 @@ fn append_log(msg: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(PathBuf::from(&log)) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(PathBuf::from(&log))
+    {
         use std::io::Write;
         let _ = writeln!(f, "[{ts}] {msg}");
     }
