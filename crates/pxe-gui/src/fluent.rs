@@ -80,9 +80,9 @@ impl FluentTheme {
             },
             selection: egui::style::Selection {
                 bg_fill: ACCENT,
-                stroke: egui::Stroke::new(1.0, ACCENT_HOVER),
+                stroke: egui::Stroke::new(1.0_f32, ACCENT_HOVER),
             },
-            window_stroke: egui::Stroke::new(1.0, stroke),
+            window_stroke: egui::Stroke::new(1.0_f32, stroke),
             window_corner_radius: CornerRadius::same(8),
             menu_corner_radius: CornerRadius::same(8),
             ..Visuals::dark()
@@ -168,8 +168,8 @@ fn widget_style(
     egui::style::WidgetVisuals {
         bg_fill: bg,
         weak_bg_fill: bg,
-        bg_stroke: egui::Stroke::new(1.0, stroke),
-        fg_stroke: egui::Stroke::new(1.0, text),
+        bg_stroke: egui::Stroke::new(1.0_f32, stroke),
+        fg_stroke: egui::Stroke::new(1.0_f32, text),
         corner_radius: CornerRadius::same(radius as u8),
         expansion: 0.0,
     }

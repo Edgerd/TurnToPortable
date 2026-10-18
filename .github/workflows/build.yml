@@ -7,6 +7,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# audit-check 需要创建 check-run；Release 上传需要 contents 写权限
+permissions:
+  contents: write
+  checks: write
+
 jobs:
   windows:
     runs-on: windows-latest

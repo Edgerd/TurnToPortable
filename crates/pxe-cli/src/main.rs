@@ -129,6 +129,7 @@ fn cmd_extract(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_build(
     file: &Path,
     name: Option<String>,

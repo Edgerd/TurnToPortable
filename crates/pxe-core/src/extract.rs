@@ -981,7 +981,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("pxe_test_frag");
         clear_dir(&tmp).unwrap();
         for s in [".text", ".rdata", ".data", ".idata", ".rsrc"] {
-            std::fs::write(tmp.join(s.to_string()), b"").unwrap();
+            std::fs::write(tmp.join(s), b"").unwrap();
         }
         assert!(!validate(&tmp));
         std::fs::remove_dir_all(&tmp).ok();
