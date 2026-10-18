@@ -18,7 +18,7 @@ tracing = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 xz2 = "0.1"
-bzip2 = "0.5"
+bzip2 = "0.6"
 zstd = "0.13"
 iso9660 = "0.1"
 hadris-udf = "2.5"
