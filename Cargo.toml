@@ -26,6 +26,6 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 eframe = "0.32"
-egui = "0.32"
+egui = "0.36"
 tar = "0.4"
 flate2 = "1"
