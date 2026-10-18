@@ -3142,7 +3142,7 @@ dependencies = [
 
 [[package]]
 name = "pxe-cli"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3155,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "pxe-core"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bzip2 0.5.2",
@@ -3180,7 +3180,7 @@ dependencies = [
 
 [[package]]
 name = "pxe-gui"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "eframe",
  "egui",
@@ -3192,7 +3192,7 @@ dependencies = [
 
 [[package]]
 name = "pxe-stub"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "toml 0.8.23",
