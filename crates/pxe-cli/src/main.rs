@@ -47,6 +47,9 @@ enum Cmd {
         /// Disable deep unpacking (overrides config)
         #[arg(long)]
         no_deep_extract: bool,
+        /// Emit machine-readable NDJSON progress events (for GUI frontends)
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -65,8 +68,11 @@ fn main() -> anyhow::Result<()> {
             out,
             no_deep_extract,
         } => {
-            pxe_core::extract::set_deep_extract(!no_deep_extract);
-            cmd_extract(&file, &out)?;
+            let opts = pxe_core::extract::ExtractOptions {
+                deep_extract: !no_deep_extract,
+                ..Default::default()
+            };
+            cmd_extract(&file, &out, &opts)?;
         }
         Cmd::Build {
             file,
@@ -76,8 +82,18 @@ fn main() -> anyhow::Result<()> {
             redist,
             config,
             no_deep_extract,
+            json,
         } => {
-            cmd_build(&file, name, out, pack, redist, &config, no_deep_extract)?;
+            cmd_build(
+                &file,
+                name,
+                out,
+                pack,
+                redist,
+                &config,
+                no_deep_extract,
+                json,
+            )?;
         }
     }
     Ok(())
@@ -101,10 +117,14 @@ fn cmd_detect(file: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_extract(file: &Path, out: &Path) -> anyhow::Result<()> {
+fn cmd_extract(
+    file: &Path,
+    out: &Path,
+    opts: &pxe_core::extract::ExtractOptions,
+) -> anyhow::Result<()> {
     let d = detect::detect(file)?;
     println!("[pxe] type: {}", d.kind.label());
-    let r = pxe_core::extract::extract(file, d.kind, out)?;
+    let r = pxe_core::extract::extract(file, d.kind, out, opts)?;
     println!("[pxe] extracted via '{}' -> {}", r.via, r.dir.display());
     Ok(())
 }
@@ -117,6 +137,7 @@ fn cmd_build(
     redist: Option<PathBuf>,
     config: &Path,
     no_deep_extract: bool,
+    json: bool,
 ) -> anyhow::Result<()> {
     let mut cfg = Config::load(config)?;
     // CLI 开关优先于配置文件
@@ -126,22 +147,53 @@ fn cmd_build(
     let out_dir = out.unwrap_or_else(|| cfg.output_dir.clone());
     let app_name = name.unwrap_or_else(|| pipeline::derive_name(file));
 
-    // 结构化进度行：[pxe|progress|0.15|消息]，GUI（Flutter）按此协议解析
-    let mut progress = |p: f32, msg: &str| {
-        println!("[pxe] {msg}");
-        println!("[pxe|progress|{p:.2}|{msg}]");
-    };
+    if json {
+        // NDJSON 事件协议（GUI 前端解析）：{"progress":0.15,"msg":"..."}
+        let mut progress = |p: f32, msg: &str| {
+            let event = serde_json::json!({
+                "progress": (p * 100.0).round() / 100.0,
+                "msg": msg,
+            });
+            println!("{event}");
+        };
+        run_pipeline(
+            file,
+            &app_name,
+            &out_dir,
+            pack_kind,
+            redist.as_deref(),
+            &cfg,
+            &mut progress,
+        )
+    } else {
+        // 人类可读日志
+        let mut progress = |p: f32, msg: &str| {
+            let _ = p;
+            println!("[pxe] {msg}");
+        };
+        run_pipeline(
+            file,
+            &app_name,
+            &out_dir,
+            pack_kind,
+            redist.as_deref(),
+            &cfg,
+            &mut progress,
+        )
+    }
+}
 
-    let r = pipeline::run(
-        file,
-        &app_name,
-        &out_dir,
-        pack_kind,
-        redist.as_deref(),
-        &cfg,
-        &mut progress,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+fn run_pipeline(
+    file: &Path,
+    app_name: &str,
+    out_dir: &Path,
+    pack_kind: builder::PackKind,
+    redist: Option<&Path>,
+    cfg: &Config,
+    progress: &mut dyn FnMut(f32, &str),
+) -> anyhow::Result<()> {
+    let r = pipeline::run(file, app_name, out_dir, pack_kind, redist, cfg, progress)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("[pxe] portable app: {}", r.portable_dir.display());
     if let Some(exe) = &r.main_exe {
         println!("[pxe] native stub launcher: {}", exe.display());

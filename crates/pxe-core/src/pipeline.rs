@@ -19,8 +19,10 @@ pub fn run(
     cfg: &Config,
     progress: &mut Progress,
 ) -> Result<builder::BuildOutcome> {
-    extract::set_timeout(cfg.timeout_seconds);
-    extract::set_deep_extract(cfg.deep_extract);
+    let opts = extract::ExtractOptions {
+        timeout: std::time::Duration::from_secs(cfg.timeout_seconds),
+        deep_extract: cfg.deep_extract,
+    };
 
     progress(0.05, "正在识别…");
     let d = detect::detect(file)?;
@@ -30,7 +32,7 @@ pub fn run(
     let tmp = std::env::temp_dir().join(format!("pxe_extract_{}", std::process::id()));
     let using_tmp = d.is_installer() || d.kind.is_archive();
     if using_tmp {
-        match extract::extract(file, d.kind, &tmp) {
+        match extract::extract(file, d.kind, &tmp, &opts) {
             Ok(r) => {
                 via = r.via;
                 source = r.dir;

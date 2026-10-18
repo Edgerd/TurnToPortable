@@ -351,6 +351,7 @@ class _HomePageState extends State<HomePage> {
       '-n', _nameCtrl.text.trim(),
       '--config', cfgFile.path,
       '--pack', _pack.flag,
+      '--json',
     ];
     final cli = _cliPath();
     if (cli == null) {
@@ -388,13 +389,20 @@ class _HomePageState extends State<HomePage> {
 
   void _onLine(String line, {bool stderr = false}) {
     final t = line.trim();
-    final m = RegExp(r'^\[pxe\|progress\|([\d.]+)\|(.*)\]$').firstMatch(t);
-    if (m != null) {
-      setState(() {
-        _progress = double.tryParse(m.group(1)!) ?? _progress;
-        _status = m.group(2)!;
-      });
-      return;
+    // NDJSON 进度事件（pxe build --json）：{"progress":0.15,"msg":"..."}
+    if (t.startsWith('{') && t.endsWith('}')) {
+      try {
+        final m = jsonDecode(t);
+        if (m is Map && m['progress'] is num && m['msg'] is String) {
+          setState(() {
+            _progress = (m['progress'] as num).toDouble();
+            _status = m['msg'] as String;
+          });
+          return;
+        }
+      } on FormatException {
+        // 非 JSON 行，按普通日志处理
+      }
     }
     if (t.startsWith('[pxe] portable app:')) _builtDir = t.substring('[pxe] portable app:'.length).trim();
     if (t.startsWith('[pxe] native stub launcher:')) _builtExe = t.substring('[pxe] native stub launcher:'.length).trim();

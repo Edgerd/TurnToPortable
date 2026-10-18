@@ -11,33 +11,28 @@ use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// 外部工具超时（秒）。由 CLI/GUI 在调用前设置，默认 300。
-pub static TIMEOUT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(300);
-
-pub fn set_timeout(secs: u64) {
-    TIMEOUT_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+/// 解压选项：由调用方（CLI/GUI/pipeline）显式传入，不再使用全局开关。
+#[derive(Debug, Clone)]
+pub struct ExtractOptions {
+    /// 外部工具超时
+    pub timeout: Duration,
+    /// 深度解包：解压成功后继续解内层"最大的压缩档"，直到解出主程序（exe）
+    pub deep_extract: bool,
 }
 
-/// 深度解包开关：解压成功后继续解内层"最大的压缩档"，直到解出主程序（exe）。
-/// 默认开启；可通过配置 / CLI / GUI 关闭。
-static DEEP_EXTRACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-
-pub fn set_deep_extract(on: bool) {
-    DEEP_EXTRACT.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-fn deep_extract_enabled() -> bool {
-    DEEP_EXTRACT.load(std::sync::atomic::Ordering::Relaxed)
+impl Default for ExtractOptions {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(300),
+            deep_extract: true,
+        }
+    }
 }
 
 /// 深度解包每层最多尝试的候选文件数
 const DEEP_MAX_CANDIDATES: usize = 5;
 /// 深度解包最大层数（安全上限，防止压缩包套压缩包死循环）
 const DEEP_MAX_LAYERS: usize = 8;
-
-fn timeout() -> Duration {
-    Duration::from_secs(TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed))
-}
 
 pub fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -56,7 +51,12 @@ pub struct Extracted {
 }
 
 /// 解包主入口：按 kind 路由到具体实现，失败时回退链兜底。
-pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracted> {
+pub fn extract(
+    path: &Path,
+    kind: InstallerKind,
+    dest: &Path,
+    opts: &ExtractOptions,
+) -> Result<Extracted> {
     std::fs::create_dir_all(dest)?;
 
     let attempts: &[(InstallerKind, &str)] = match kind {
@@ -95,7 +95,7 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
         let r = match k {
             InstallerKind::Zip => extract_zip(path, dest),
             InstallerKind::Sfx7z => extract_7z_embedded(path, dest),
-            InstallerKind::Nsis => extract_7z_external(path, dest),
+            InstallerKind::Nsis => extract_7z_external(path, dest, opts),
             InstallerKind::Tar => {
                 extract_tar(std::io::BufReader::new(std::fs::File::open(path)?), dest)
             }
@@ -111,6 +111,7 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                     path.display().to_string(),
                     dest.display().to_string(),
                 ],
+                opts,
             ),
             InstallerKind::InnoSetup => extract_external(
                 "innoextract",
@@ -120,8 +121,9 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                     "-s".into(),
                     path.display().to_string(),
                 ],
+                opts,
             ),
-            InstallerKind::Msi => extract_msi(path, dest),
+            InstallerKind::Msi => extract_msi(path, dest, opts),
             InstallerKind::Rar => extract_external(
                 "unrar",
                 &[
@@ -129,6 +131,7 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                     path.display().to_string(),
                     format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR),
                 ],
+                opts,
             ),
             _ => continue,
         };
@@ -138,9 +141,9 @@ pub fn extract(path: &Path, kind: InstallerKind, dest: &Path) -> Result<Extracte
                 if *k == InstallerKind::InnoSetup {
                     let _ = flatten_app_dir(dest);
                 }
-                if deep_extract_enabled() {
+                if opts.deep_extract {
                     // 深度解包：反复解"最大的压缩档候选"，直到解出主程序（exe）
-                    deep_unpack(dest);
+                    deep_unpack(dest, opts);
                 } else {
                     // electron-builder 的 NSIS 布局：外层壳里只有 $PLUGINSDIR/app-64.7z，
                     // 真正的主程序在内层 7z —— 检测到就二次解包（embedded / external 解出的都适用）
@@ -225,7 +228,7 @@ fn flatten_app_dir(dest: &Path) -> Result<()> {
 /// 深度解包：每层在解压结果里找最大的压缩档文件按大小降序依次尝试（最多 5 个），
 /// 解出且校验通过就用内层内容替换当前目录；一旦目录里出现主程序 exe 就停止。
 /// 覆盖 electron-builder（$PLUGINSDIR/app-64.7z）、zip 套 zip、分卷合并后套壳等场景。
-fn deep_unpack(dest: &Path) {
+fn deep_unpack(dest: &Path, opts: &ExtractOptions) {
     for _ in 0..DEEP_MAX_LAYERS {
         // 收集本层候选：按大小降序，最多取 5 个压缩档
         let mut candidates: Vec<(u64, PathBuf)> = crate::fsx::walk_files(dest, 4)
@@ -253,7 +256,7 @@ fn deep_unpack(dest: &Path) {
         for (_, cand) in candidates {
             let tmp = dest.join(".__pxe_deep");
             let _ = std::fs::remove_dir_all(&tmp);
-            let ok = try_extract_candidate(&cand, &tmp) && validate(&tmp);
+            let ok = try_extract_candidate(&cand, &tmp, opts) && validate(&tmp);
             if ok {
                 // 用内层内容替换当前目录（保留 tmp 自身）
                 if clear_dir_keep(dest, &tmp).is_ok() {
@@ -282,7 +285,7 @@ fn is_deep_candidate(p: &Path) -> bool {
 }
 
 /// 按扩展名路由到内嵌解压器
-fn try_extract_candidate(path: &Path, tmp: &Path) -> bool {
+fn try_extract_candidate(path: &Path, tmp: &Path, opts: &ExtractOptions) -> bool {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -294,7 +297,7 @@ fn try_extract_candidate(path: &Path, tmp: &Path) -> bool {
             if embedded.is_ok() {
                 embedded
             } else {
-                extract_7z_external(path, tmp)
+                extract_7z_external(path, tmp, opts)
             }
         }
         "zip" => extract_zip(path, tmp),
@@ -343,7 +346,7 @@ fn extract_7z_embedded(path: &Path, dest: &Path) -> Result<()> {
 }
 
 /// 用外部 7-Zip 解（NSIS 外壳只有完整版 7z 支持；7z.exe/7z.dll 需在本程序目录或 PATH）
-fn extract_7z_external(path: &Path, dest: &Path) -> Result<()> {
+fn extract_7z_external(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
     let exe = find_7z().ok_or_else(|| {
         Error::Extraction(
             "7-Zip not found: this NSIS package needs 7z.exe + 7z.dll (place them next to the program, or install 7-Zip)".into(),
@@ -353,7 +356,7 @@ fn extract_7z_external(path: &Path, dest: &Path) -> Result<()> {
     cmd.args(["x", "-y", &format!("-o{}", dest.display())]);
     cmd.arg(path);
     let (status, stderr) =
-        run_with_timeout(no_window(cmd)).map_err(|e| Error::Extraction(e.to_string()))?;
+        run_with_timeout(no_window(cmd), opts).map_err(|e| Error::Extraction(e.to_string()))?;
     if !status.success() {
         let detail = stderr.trim();
         let last = detail
@@ -424,7 +427,10 @@ fn no_window(cmd: std::process::Command) -> std::process::Command {
 
 /// spawn 子进程并带超时轮询等待（超时不留僵尸进程：先 kill 再收尸）。
 /// 返回退出码与 stderr（截断到 4KB，用于生成可读错误）。
-fn run_with_timeout(mut cmd: std::process::Command) -> Result<(std::process::ExitStatus, String)> {
+fn run_with_timeout(
+    mut cmd: std::process::Command,
+    opts: &ExtractOptions,
+) -> Result<(std::process::ExitStatus, String)> {
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::piped());
     let mut child = cmd
@@ -440,12 +446,12 @@ fn run_with_timeout(mut cmd: std::process::Command) -> Result<(std::process::Exi
                 break;
             }
             None => {
-                if start.elapsed() > timeout() {
+                if start.elapsed() > opts.timeout {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(Error::Extraction(format!(
                         "timed out after {}s",
-                        timeout().as_secs()
+                        opts.timeout.as_secs()
                     )));
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -464,14 +470,14 @@ fn run_with_timeout(mut cmd: std::process::Command) -> Result<(std::process::Exi
     Ok((status, buf))
 }
 
-fn extract_external(tool: &str, args: &[String]) -> Result<()> {
+fn extract_external(tool: &str, args: &[String], opts: &ExtractOptions) -> Result<()> {
     if which(tool).is_none() {
         return Err(Error::Extraction(format!("{tool} not found in PATH")));
     }
     let mut cmd = std::process::Command::new(tool);
     cmd.args(args);
     let (status, stderr) =
-        run_with_timeout(no_window(cmd)).map_err(|e| Error::Extraction(e.to_string()))?;
+        run_with_timeout(no_window(cmd), opts).map_err(|e| Error::Extraction(e.to_string()))?;
     if !status.success() {
         let detail = stderr.trim();
         if detail.is_empty() {
@@ -491,7 +497,7 @@ fn extract_external(tool: &str, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn extract_msi(path: &Path, dest: &Path) -> Result<()> {
+fn extract_msi(path: &Path, dest: &Path, opts: &ExtractOptions) -> Result<()> {
     if cfg!(windows) {
         let mut cmd = std::process::Command::new("msiexec");
         cmd.args([
@@ -501,7 +507,7 @@ fn extract_msi(path: &Path, dest: &Path) -> Result<()> {
             &format!("TARGETDIR={}", dest.display()),
         ]);
         let (status, _stderr) =
-            run_with_timeout(no_window(cmd)).map_err(|e| Error::Extraction(e.to_string()))?;
+            run_with_timeout(no_window(cmd), opts).map_err(|e| Error::Extraction(e.to_string()))?;
         if !status.success() {
             return Err(Error::Extraction(format!("msiexec exited with {status}")));
         }
@@ -515,6 +521,7 @@ fn extract_msi(path: &Path, dest: &Path) -> Result<()> {
                 dest.display().to_string(),
                 path.display().to_string(),
             ],
+            opts,
         )
     }
 }

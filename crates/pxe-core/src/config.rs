@@ -74,7 +74,7 @@ mod tests {
         // output_dir        -> cli/gui 默认输出
         // bundle_redist_note -> builder::write_redist_note
         // prefer_native_stub -> builder::write_launchers
-        // deep_extract      -> extract::set_deep_extract（cli/gui 调用前设置）
+        // deep_extract      -> extract::ExtractOptions（pipeline 由 cfg 构造）
         let _ = (
             c.output_dir.clone(),
             c.compression_level,
